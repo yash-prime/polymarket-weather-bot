@@ -185,8 +185,8 @@ def parse(question: str, db_path: str | None = None) -> dict[str, Any]:
         logger.debug("parser: cache HIT for question hash %s", question_hash[:8])
         return cached
 
-    # --- Path 1: Ollama ---
-    result = _try_ollama(question)
+    # --- Path 1: OpenRouter (if configured) or Ollama ---
+    result = _try_llm(question)
 
     # --- Path 2: Regex fallback ---
     if result is None:
@@ -204,26 +204,45 @@ def parse(question: str, db_path: str | None = None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Internal — Ollama path
+# Internal — LLM path (OpenRouter preferred, Ollama fallback)
 # ---------------------------------------------------------------------------
 
 
-def _try_ollama(question: str) -> dict[str, Any] | None:
+def _try_llm(question: str) -> dict[str, Any] | None:
     """
-    Attempt to parse the question using the local Ollama model.
+    Attempt to parse the question using the best available LLM:
+      1. OpenRouter (if OPENROUTER_API_KEY is set)
+      2. Ollama (local fallback)
 
     Returns parsed dict on success, None on any failure.
     """
+    prompt = f"Parse this Polymarket weather question:\n\n{question}"
+    raw = None
+
+    # Try OpenRouter first
     try:
-        from llm.ollama_client import OllamaUnavailableError, generate
+        from llm.openrouter_client import generate as or_generate, is_configured
+        if is_configured():
+            raw = or_generate(prompt, system=_SYSTEM_PROMPT)
+            logger.debug("parser: used OpenRouter (%s)", __import__("config").settings.OPENROUTER_MODEL)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("parser: OpenRouter failed: %s — trying Ollama", exc)
+        raw = None
 
-        prompt = f"Parse this Polymarket weather question:\n\n{question}"
-        raw = generate(prompt, system=_SYSTEM_PROMPT)
+    # Fall back to Ollama if OpenRouter not configured or failed
+    if raw is None:
+        try:
+            from llm.ollama_client import OllamaUnavailableError, generate
+            raw = generate(prompt, system=_SYSTEM_PROMPT)
+            logger.debug("parser: used Ollama")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("parser: Ollama unavailable: %s", exc)
+            return None
 
-        # Extract JSON from the response (model may include markdown fences)
+    try:
         json_str = _extract_json(raw)
         if json_str is None:
-            logger.warning("parser: Ollama response contained no valid JSON")
+            logger.warning("parser: LLM response contained no valid JSON")
             return None
 
         data = json.loads(json_str)
@@ -231,14 +250,8 @@ def _try_ollama(question: str) -> dict[str, Any] | None:
         _validate_parsed(data)
         return data
 
-    except (OllamaUnavailableError, ImportError):
-        logger.debug("parser: Ollama unavailable — falling back to regex")
-        return None
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
-        logger.warning("parser: Ollama parse failed: %s", exc)
-        return None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("parser: Ollama unexpected error: %s", exc)
+        logger.warning("parser: LLM parse failed: %s", exc)
         return None
 
 

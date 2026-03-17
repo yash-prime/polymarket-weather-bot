@@ -59,9 +59,7 @@ def resolution_risk(text: str) -> dict:
     """
     prompt = f"Assess the resolution risk for this prediction market:\n\n{text}"
 
-    result = _try_claude(prompt, _RESOLUTION_RISK_SYSTEM, task="resolution_risk")
-    if result is None:
-        result = _try_ollama_json(prompt, _RESOLUTION_RISK_SYSTEM, task="resolution_risk")
+    result = _try_llm(prompt, _RESOLUTION_RISK_SYSTEM, task="resolution_risk", want_json=True)
 
     if result and "risk_level" in result:
         return result
@@ -111,7 +109,7 @@ def narrate_ensemble(model_result: ModelResult) -> str:
         + "\n\nExplain this forecast in plain English for a trader."
     )
 
-    result = _try_ollama_text(prompt, _NARRATION_SYSTEM, task="narrate_ensemble")
+    result = _try_llm(prompt, _NARRATION_SYSTEM, task="narrate_ensemble", want_json=False)
     if result:
         return result
 
@@ -160,9 +158,7 @@ def trade_commentary(
         f"\nGenerate a 1-2 sentence trade rationale."
     )
 
-    result = _try_claude(prompt, _COMMENTARY_SYSTEM, task="trade_commentary")
-    if result is None:
-        result = _try_ollama_text(prompt, _COMMENTARY_SYSTEM, task="trade_commentary")
+    result = _try_llm(prompt, _COMMENTARY_SYSTEM, task="trade_commentary", want_json=False)
 
     if isinstance(result, str) and result:
         return result
@@ -176,78 +172,84 @@ def trade_commentary(
 
 
 # ---------------------------------------------------------------------------
-# Internal — Claude API
+# Internal — Unified LLM router: OpenRouter → Anthropic → Ollama
 # ---------------------------------------------------------------------------
 
 
-def _try_claude(prompt: str, system: str, task: str) -> dict | str | None:
+def _try_llm(
+    prompt: str, system: str, task: str, want_json: bool = False
+) -> dict | str | None:
     """
-    Attempt the call via the Claude Sonnet API.
+    Call the best available LLM in priority order:
+      1. OpenRouter  (if OPENROUTER_API_KEY is set)
+      2. Anthropic   (if ANTHROPIC_API_KEY is set)
+      3. Ollama      (local fallback)
 
-    Returns parsed dict (for JSON tasks) or str (for text tasks), or None on failure.
-    Logs a warning if ANTHROPIC_API_KEY is not set.
+    Parameters
+    ----------
+    prompt    : User prompt.
+    system    : System prompt.
+    task      : Name used in log messages.
+    want_json : If True, attempt to parse the response as JSON.
+
+    Returns
+    -------
+    Parsed dict (if want_json=True and parsing succeeds), str, or None on failure.
     """
-    if not settings.ANTHROPIC_API_KEY:
-        logger.warning(
-            "analyst.%s: ANTHROPIC_API_KEY not set — falling back to Ollama", task
-        )
-        return None
+    import json as _json
+    from llm.parser import _extract_json
 
+    raw: str | None = None
+
+    # 1. OpenRouter
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=512,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = message.content[0].text.strip()
-
-        # Try to parse as JSON first (resolution_risk returns JSON)
-        if text.startswith("{"):
-            import json
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                pass
-
-        return text
-
+        from llm.openrouter_client import generate as or_generate, is_configured
+        if is_configured():
+            raw = or_generate(prompt, system=system)
+            logger.debug("analyst.%s: used OpenRouter", task)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("analyst.%s: Claude API call failed: %s", task, exc)
+        logger.warning("analyst.%s: OpenRouter failed: %s", task, exc)
+        raw = None
+
+    # 2. Anthropic
+    if raw is None and settings.ANTHROPIC_API_KEY:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+            message = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=512,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = message.content[0].text.strip()
+            logger.debug("analyst.%s: used Anthropic Claude", task)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("analyst.%s: Anthropic failed: %s", task, exc)
+            raw = None
+
+    # 3. Ollama
+    if raw is None:
+        try:
+            from llm.ollama_client import generate as ol_generate
+            raw = ol_generate(prompt, system=system)
+            logger.debug("analyst.%s: used Ollama", task)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("analyst.%s: Ollama failed: %s", task, exc)
+            return None
+
+    if raw is None:
         return None
 
-
-# ---------------------------------------------------------------------------
-# Internal — Ollama
-# ---------------------------------------------------------------------------
-
-
-def _try_ollama_json(prompt: str, system: str, task: str) -> dict | None:
-    """Attempt Ollama call and parse JSON response."""
-    try:
-        from llm.ollama_client import OllamaUnavailableError, generate
-        from llm.parser import _extract_json
-        import json
-
-        raw = generate(prompt, system=system)
+    # Parse JSON if requested
+    if want_json:
         json_str = _extract_json(raw)
         if json_str:
-            return json.loads(json_str)
-        logger.warning("analyst.%s: Ollama response had no valid JSON", task)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("analyst.%s: Ollama JSON call failed: %s", task, exc)
-    return None
+            try:
+                return _json.loads(json_str)
+            except _json.JSONDecodeError:
+                pass
+        logger.warning("analyst.%s: LLM response had no valid JSON", task)
+        return None
 
-
-def _try_ollama_text(prompt: str, system: str, task: str) -> str | None:
-    """Attempt Ollama call and return raw text response."""
-    try:
-        from llm.ollama_client import OllamaUnavailableError, generate
-
-        return generate(prompt, system=system)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("analyst.%s: Ollama text call failed: %s", task, exc)
-    return None
+    return raw

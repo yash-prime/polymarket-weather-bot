@@ -12,7 +12,10 @@ import stat
 
 from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    load_dotenv()
+except PermissionError:
+    pass  # .env unreadable (e.g. root-owned in CI); fall through to env vars / defaults
 
 # --- Trading ---
 TRADING_MODE: str = os.getenv("TRADING_MODE", "paper")  # "paper" | "live"
@@ -47,6 +50,11 @@ CACHE_TTL_METEOSTAT: int = int(os.getenv("CACHE_TTL_METEOSTAT", "86400"))       
 OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")  # Optional
+
+# --- OpenRouter (replaces Ollama + Anthropic when key is set) ---
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "stepfun/step-3.5-flash:free")
+OPENROUTER_HOST: str = os.getenv("OPENROUTER_HOST", "https://openrouter.ai/api/v1")
 
 # --- Polymarket ---
 CLOB_HOST: str = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
@@ -104,9 +112,10 @@ def validate() -> None:
             "TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID not configured — alerts disabled"
         )
 
-    if not ANTHROPIC_API_KEY:
+    if not ANTHROPIC_API_KEY and not OPENROUTER_API_KEY:
         logging.warning(
-            "ANTHROPIC_API_KEY not set — Claude API calls will fall back to Ollama"
+            "Neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY is set — "
+            "LLM calls will use local Ollama"
         )
 
     _check_env_file_permissions()
