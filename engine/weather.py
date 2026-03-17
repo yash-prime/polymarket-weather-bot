@@ -1,0 +1,194 @@
+"""
+engine/weather.py — Top-level weather probability computation.
+
+This is the single entry point called by the scan loop:
+
+    model_result = weather.compute(market)
+
+Responsibilities
+----------------
+1. Extract location, metric, threshold, operator, and window from the
+   market's parsed JSON field.
+2. Fetch data from all live sources in parallel where possible:
+     - Open-Meteo ensemble (50–100 members, global)
+     - NOAA NWS (US lat/lon only)
+     - ECMWF snapshot from the ecmwf_snapshots DB table (globally available)
+3. Delegate to ensemble.compute_probability() for weighted aggregation.
+4. Return a ModelResult, or None if no sources produced usable data.
+
+Source routing
+--------------
+- Open-Meteo:  always attempted (global coverage)
+- NOAA:        attempted only for US coordinates (24–50°N, 65–125°W)
+- ECMWF:       read from DB snapshot (populated by the 6h ingest job)
+
+Error handling
+--------------
+Each source failure is logged at WARNING level and treated as a degraded
+source. The function returns None only when ALL sources fail — a degraded
+but non-empty ModelResult is preferable to dropping the market entirely.
+"""
+import logging
+from typing import Any
+
+from engine.ensemble import compute_probability
+from engine.models import ModelResult
+from market.models import Market
+
+logger = logging.getLogger(__name__)
+
+# Map canonical metric names (from LLM parser) → Open-Meteo API variable names
+# Open-Meteo ensemble returns per-member hourly series for these variables.
+_METRIC_TO_OM_VARIABLE: dict[str, str] = {
+    "temperature_2m_max": "temperature_2m",
+    "temperature_2m_min": "temperature_2m",
+    "precipitation_sum": "precipitation",
+    "wind_speed_10m_max": "wind_speed_10m",
+}
+
+# Bounding box for US CONUS (NOAA NWS coverage)
+_US_LAT_MIN, _US_LAT_MAX = 24.0, 50.0
+_US_LON_MIN, _US_LON_MAX = -125.0, -65.0
+
+
+def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
+    """
+    Compute the ensemble weather probability for a market.
+
+    Parameters
+    ----------
+    market   : Market with parse_status="success" and a valid parsed dict.
+    db_path  : Override the SQLite DB path (used in tests).
+
+    Returns
+    -------
+    ModelResult on success, None if no source produced usable data.
+    """
+    parsed = market.parsed
+    if not parsed:
+        logger.warning("weather.compute: market %s has no parsed JSON — skipping", market.id)
+        return None
+
+    lat = parsed.get("lat")
+    lon = parsed.get("lon")
+    metric = parsed.get("metric")
+    threshold = parsed.get("threshold")
+    operator = parsed.get("operator", ">")
+    window_start = parsed.get("window_start")
+
+    if not all([lat is not None, lon is not None, metric, threshold is not None, window_start]):
+        logger.warning(
+            "weather.compute: market %s — incomplete parsed JSON (lat=%s lon=%s metric=%s "
+            "threshold=%s window_start=%s)",
+            market.id, lat, lon, metric, threshold, window_start,
+        )
+        return None
+
+    lat = float(lat)
+    lon = float(lon)
+    threshold = float(threshold)
+
+    om_variable = _METRIC_TO_OM_VARIABLE.get(metric)
+    if om_variable is None:
+        logger.warning(
+            "weather.compute: unknown metric '%s' for market %s — cannot map to Open-Meteo",
+            metric, market.id,
+        )
+
+    # --- Fetch Open-Meteo ensemble ---
+    open_meteo_ensemble = _fetch_open_meteo(lat, lon, om_variable)
+
+    # --- Fetch NOAA (US only) ---
+    noaa_forecast = None
+    if _is_us_coordinates(lat, lon):
+        noaa_forecast = _fetch_noaa(lat, lon)
+
+    # --- Read ECMWF from DB ---
+    ecmwf_value = _fetch_ecmwf(lat, lon, metric, db_path)
+
+    sources_attempted = ["open_meteo"]
+    if _is_us_coordinates(lat, lon):
+        sources_attempted.append("noaa")
+    sources_attempted.append("ecmwf")
+
+    sources_succeeded = []
+    if open_meteo_ensemble is not None:
+        sources_succeeded.append("open_meteo")
+    if noaa_forecast is not None:
+        sources_succeeded.append("noaa")
+    if ecmwf_value is not None:
+        sources_succeeded.append("ecmwf")
+
+    if not sources_succeeded:
+        logger.error(
+            "weather.compute: all sources failed for market %s (lat=%.4f lon=%.4f metric=%s) "
+            "— attempted: %s",
+            market.id, lat, lon, metric, sources_attempted,
+        )
+        return None
+
+    if len(sources_succeeded) < len(sources_attempted):
+        missing = set(sources_attempted) - set(sources_succeeded)
+        logger.warning(
+            "weather.compute: degraded sources for market %s — missing: %s",
+            market.id, missing,
+        )
+
+    return compute_probability(
+        lat=lat,
+        lon=lon,
+        metric=metric,
+        threshold=threshold,
+        operator=operator,
+        forecast_date=window_start,
+        open_meteo_ensemble=open_meteo_ensemble,
+        noaa_forecast=noaa_forecast,
+        ecmwf_value=ecmwf_value,
+        db_path=db_path,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal fetch helpers — each returns None on failure
+# ---------------------------------------------------------------------------
+
+
+def _fetch_open_meteo(lat: float, lon: float, variable: str | None) -> dict | None:
+    """Fetch Open-Meteo ensemble data. Returns None on any error."""
+    if variable is None:
+        logger.debug("_fetch_open_meteo: no variable mapping — skipping")
+        return None
+    try:
+        from data.sources.open_meteo import get_ensemble
+        return get_ensemble(lat, lon, variables=[variable])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_fetch_open_meteo failed for %.4f,%.4f: %s", lat, lon, exc)
+        return None
+
+
+def _fetch_noaa(lat: float, lon: float) -> dict | None:
+    """Fetch NOAA NWS forecast. Returns None on any error or non-US coords."""
+    try:
+        from data.sources.noaa import get_forecast
+        return get_forecast(lat, lon)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_fetch_noaa failed for %.4f,%.4f: %s", lat, lon, exc)
+        return None
+
+
+def _fetch_ecmwf(lat: float, lon: float, metric: str, db_path: str | None) -> float | None:
+    """Read the most recent ECMWF snapshot from the DB. Returns None on any error."""
+    try:
+        from data.sources.ecmwf import get_nearest_snapshot
+        return get_nearest_snapshot(lat, lon, metric, db_path=db_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_fetch_ecmwf failed for %.4f,%.4f: %s", lat, lon, exc)
+        return None
+
+
+def _is_us_coordinates(lat: float, lon: float) -> bool:
+    """Return True if coordinates fall within the US CONUS bounding box."""
+    return (
+        _US_LAT_MIN <= lat <= _US_LAT_MAX
+        and _US_LON_MIN <= lon <= _US_LON_MAX
+    )
