@@ -15,8 +15,14 @@ Two responsibilities:
 
 Gamma API
 ---------
-Public endpoint, no auth required: https://gamma-api.polymarket.com/markets
-Filter params: active=true, tag_slug=weather (or similar)
+Public endpoint, no auth required.
+Primary:  https://gamma-api.polymarket.com/events  (tag_slug=weather)
+          Markets are nested inside events as m["markets"]
+Fallback: https://gamma-api.polymarket.com/markets (keyword filter)
+
+Weather tag slugs used by Polymarket:
+  weather, temperature, precipitation, new-york-city, dallas, miami,
+  seattle, hong-kong, shanghai, seoul, auckland, tel-aviv, taipei
 
 Rate limiting
 -------------
@@ -43,14 +49,33 @@ from market.models import Market
 
 logger = logging.getLogger(__name__)
 
+_GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events"
 _GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
 _SOURCE = "gamma"
 _RATE_LIMITER = RateLimiter()
 
-# Tags / keywords used to identify weather markets in Gamma API responses
+# Tag slugs that Polymarket uses for weather events (confirmed from /predictions/weather)
+_WEATHER_TAG_SLUGS = [
+    "weather",
+    "temperature",
+    "precipitation",
+    "new-york-city",
+    "dallas",
+    "miami",
+    "seattle",
+    "hong-kong",
+    "shanghai",
+    "seoul",
+    "auckland",
+    "tel-aviv",
+    "taipei",
+    "climate-science",
+]
+
+# Keywords for fallback keyword-based filtering on /markets endpoint
 _WEATHER_KEYWORDS = (
     "weather", "temperature", "rain", "snow", "hurricane", "tornado",
-    "wind", "frost", "heat", "cold", "precipitation",
+    "wind", "frost", "heat", "cold", "precipitation", "celsius", "fahrenheit",
 )
 
 
@@ -163,16 +188,55 @@ def _fetch_raw(url: str, params: dict) -> list:
 
 
 def _fetch_from_gamma() -> list | None:
-    """Fetch active markets from Gamma API. Returns None on exhausted retries."""
-    params = {
-        "active": "true",
-        "closed": "false",
-        "limit": 200,
-    }
+    """
+    Fetch active weather markets from Gamma API.
+
+    Strategy:
+    1. Query /events endpoint for each weather tag slug — markets are nested
+       inside events as event["markets"]. This is the primary path and matches
+       what polymarket.com/predictions/weather shows.
+    2. Fall back to /markets endpoint with keyword filtering if events returns
+       nothing useful.
+
+    Returns a flat list of market dicts, or None on total failure.
+    """
+    markets: list[dict] = []
+    seen_ids: set[str] = set()
+
+    # --- Primary: /events endpoint per weather tag slug ---
+    for slug in _WEATHER_TAG_SLUGS:
+        try:
+            params = {
+                "active": "true",
+                "closed": "false",
+                "tag_slug": slug,
+                "limit": 100,
+            }
+            events = _fetch_raw(_GAMMA_EVENTS_URL, params)
+            for event in events:
+                for m in event.get("markets", []):
+                    mid = str(m.get("id") or m.get("conditionId") or "")
+                    if mid and mid not in seen_ids:
+                        seen_ids.add(mid)
+                        markets.append(m)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("scanner: events fetch failed for slug=%s: %s", slug, exc)
+
+    if markets:
+        logger.info("scanner: fetched %d markets via /events endpoint", len(markets))
+        return markets
+
+    # --- Fallback: /markets endpoint (keyword filter applied downstream) ---
+    logger.info("scanner: /events returned nothing, falling back to /markets")
     try:
+        params = {
+            "active": "true",
+            "closed": "false",
+            "limit": 200,
+        }
         return _fetch_raw(_GAMMA_MARKETS_URL, params)
     except Exception as exc:  # noqa: BLE001
-        logger.error("scanner: Gamma API fetch failed: %s", exc)
+        logger.error("scanner: Gamma API fetch failed on both endpoints: %s", exc)
         return None
 
 
