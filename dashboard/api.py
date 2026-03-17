@@ -220,9 +220,27 @@ async def api_portfolio():
             """).fetchall()
 
         snapshot = dict(snap) if snap else {}
+
+        pos_list = []
+        for p in positions:
+            entry = p["entry_price"] or 0
+            yes_price = p["yes_price"] or entry
+            size = p["size"] or 0
+            direction = p["direction"]
+            if direction == "YES":
+                unrealized = size * (yes_price / entry - 1) if entry > 0 else 0.0
+            else:
+                no_entry = 1.0 - entry
+                no_current = 1.0 - yes_price
+                unrealized = size * (no_current / no_entry - 1) if no_entry > 0 else 0.0
+            row = dict(p)
+            row["unrealized_pnl"] = unrealized
+            row["current_price"] = yes_price
+            pos_list.append(row)
+
         return {
             "snapshot": snapshot,
-            "positions": [dict(p) for p in positions],
+            "positions": pos_list,
         }
     except Exception as e:
         return {"snapshot": {}, "positions": [], "error": str(e)}

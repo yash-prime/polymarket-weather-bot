@@ -453,15 +453,22 @@ async function updatePortfolio(){
       posEl.innerHTML='';
       return;
     }
-    posEl.innerHTML = d.positions.map(p=>`
-      <div class="pos-row" style="flex-direction:column;align-items:flex-start;gap:3px">
+    posEl.innerHTML = d.positions.map(p=>{
+      const pnl = p.unrealized_pnl;
+      const pnlColor = pnl==null?'muted': pnl>0.01?'green': pnl<-0.01?'red':'muted';
+      const pnlStr = pnl!=null ? (pnl>=0?'+':'')+usd(pnl) : '';
+      return `<div class="pos-row" style="flex-direction:column;align-items:flex-start;gap:3px">
         <div style="display:flex;align-items:center;gap:8px;width:100%">
           <span class="pos-dir ${(p.direction||'').toLowerCase()}">${p.direction}</span>
           <span class="pos-q" title="${esc(p.question||p.market_id)}">${esc(p.question||p.market_id)}</span>
-          <span class="pos-size" style="margin-left:auto">${usd(p.size)}</span>
+          <span style="margin-left:auto;font-family:var(--font-mono);font-size:.75rem;white-space:nowrap">
+            <span class="muted">${usd(p.size)}</span>
+            ${pnlStr?`<span class="${pnlColor}" style="margin-left:6px">${pnlStr}</span>`:''}
+          </span>
         </div>
         ${p.rationale?`<div class="trade-rationale" style="padding-left:4px">${esc(p.rationale)}</div>`:''}
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch(e){ console.warn('portfolio error',e); }
 }
 

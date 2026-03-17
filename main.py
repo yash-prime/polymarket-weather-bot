@@ -100,7 +100,8 @@ def _job_llm_parse() -> None:
 
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT id, question FROM markets WHERE parse_status = 'pending' LIMIT 20"
+                "SELECT id, question FROM markets "
+                "WHERE parse_status IN ('pending', 'failed') LIMIT 50"
             ).fetchall()
 
         if not rows:
@@ -207,7 +208,15 @@ def _job_scan(clob_client) -> None:
             except Exception as exc:  # noqa: BLE001
                 logger.error("main._job_scan: error processing market %s: %s", market.id, exc)
 
-        # 3. Cancel stale orders (live only)
+        # 3. Update paper position prices + settle resolved markets
+        if mode == "paper":
+            from trading.paper_trader import settle_resolved_positions, update_position_prices
+            update_position_prices()
+            settled = settle_resolved_positions()
+            if settled:
+                logger.info("main._job_scan: settled %d resolved paper positions", settled)
+
+        # 4. Cancel stale orders (live only)
         if mode == "live" and clob_client is not None:
             from trading.trader import cancel_stale_orders
             cancel_stale_orders(

@@ -83,12 +83,88 @@ def cancel_stale_orders(
     max_age_minutes: int | None = None,
     db_path: str | None = None,
 ) -> int:
-    """
-    Cancel stale paper orders (no-op in paper mode — no real orders to worry about).
-
-    Returns 0.
-    """
+    """Cancel stale paper orders (no-op in paper mode). Returns 0."""
     return 0
+
+
+def update_position_prices(db_path: str | None = None) -> int:
+    """Refresh current_price and unrealized_pnl for all open paper positions."""
+    try:
+        from db.init import get_connection
+        with get_connection(db_path) as conn:
+            positions = conn.execute(
+                "SELECT p.market_id, p.direction, p.size, p.entry_price, m.yes_price "
+                "FROM paper_positions p LEFT JOIN markets m ON m.id = p.market_id "
+                "WHERE p.size > 0"
+            ).fetchall()
+            for p in positions:
+                yes_price = p["yes_price"]
+                if yes_price is None:
+                    continue
+                entry = p["entry_price"]
+                if p["direction"] == "YES":
+                    unrealized = p["size"] * (yes_price / entry - 1) if entry > 0 else 0.0
+                else:
+                    no_entry = 1.0 - entry
+                    no_current = 1.0 - yes_price
+                    unrealized = p["size"] * (no_current / no_entry - 1) if no_entry > 0 else 0.0
+                conn.execute(
+                    "UPDATE paper_positions SET current_price=?, unrealized_pnl=? WHERE market_id=?",
+                    (yes_price, unrealized, p["market_id"]),
+                )
+            conn.commit()
+        return len(positions)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("paper_trader.update_position_prices: %s", exc)
+        return 0
+
+
+def settle_resolved_positions(db_path: str | None = None) -> int:
+    """
+    Settle open paper positions where the market has resolved
+    (end_date passed AND yes_price at 0 or 1).
+    """
+    try:
+        from db.init import get_connection
+        with get_connection(db_path) as conn:
+            positions = conn.execute(
+                "SELECT p.market_id, p.direction, p.size, p.entry_price, m.yes_price "
+                "FROM paper_positions p LEFT JOIN markets m ON m.id = p.market_id "
+                "WHERE p.size > 0 AND m.end_date < datetime('now') "
+                "AND (m.yes_price >= 0.99 OR m.yes_price <= 0.01)"
+            ).fetchall()
+
+            settled = 0
+            for p in positions:
+                yes_price = p["yes_price"]
+                entry = p["entry_price"]
+                size = p["size"]
+                direction = p["direction"]
+                yes_wins = yes_price >= 0.99
+
+                if direction == "YES":
+                    realized = size * (1.0 / entry - 1) if (yes_wins and entry > 0) else -size
+                else:
+                    no_entry = 1.0 - entry
+                    realized = size * (1.0 / no_entry - 1) if ((not yes_wins) and no_entry > 0) else -size
+
+                conn.execute(
+                    "UPDATE paper_positions SET size=0, unrealized_pnl=0, status='closed' WHERE market_id=?",
+                    (p["market_id"],),
+                )
+                conn.execute(
+                    "UPDATE paper_trades SET status='filled', closed_at=datetime('now') "
+                    "WHERE market_id=? AND status='open'",
+                    (p["market_id"],),
+                )
+                outcome = "WIN" if ((direction == "YES" and yes_wins) or (direction == "NO" and not yes_wins)) else "LOSS"
+                logger.info("paper_trader.settle: %s %s %s realized=%.2f USDC", outcome, direction, p["market_id"], realized)
+                settled += 1
+            conn.commit()
+        return settled
+    except Exception as exc:  # noqa: BLE001
+        logger.error("paper_trader.settle_resolved_positions: %s", exc)
+        return 0
 
 
 # ---------------------------------------------------------------------------
