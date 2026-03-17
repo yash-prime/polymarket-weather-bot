@@ -183,7 +183,7 @@ async def api_trades():
             rows = conn.execute("""
                 SELECT t.id, t.market_id, t.direction, t.final_size AS size,
                        t.simulated_fill_price AS price, t.status,
-                       t.created_at, m.question
+                       t.created_at, t.rationale, m.question
                 FROM paper_trades t
                 LEFT JOIN markets m ON m.id = t.market_id
                 ORDER BY t.created_at DESC LIMIT 30

@@ -22,7 +22,7 @@ _SCHEMA_DIR = Path(__file__).parent
 _SCHEMA_FILE = _SCHEMA_DIR / "schema.sql"
 
 # Increment this whenever schema.sql changes incompatibly.
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def _get_db_path() -> str:
@@ -87,6 +87,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
 
     migrations = {
         # 1: first version — schema.sql handles it entirely
+        2: _migrate_v2,
     }
 
     for version in sorted(migrations.keys()):
@@ -99,6 +100,14 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             )
             conn.commit()
             current = version
+
+
+def _migrate_v2(conn: sqlite3.Connection) -> None:
+    """v2: add rationale column to paper_trades."""
+    try:
+        conn.execute("ALTER TABLE paper_trades ADD COLUMN rationale TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
 
 def get(table: str, key: str, db_path: str | None = None) -> str | None:

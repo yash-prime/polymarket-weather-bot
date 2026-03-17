@@ -47,6 +47,31 @@ logger = logging.getLogger("main")
 # ---------------------------------------------------------------------------
 
 
+def _persist_weak_signal(market, model_result) -> None:
+    """Persist model probability to signals table even when edge is too small to trade."""
+    try:
+        from db.init import get_connection
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO signals
+                  (market_id, direction, adjusted_edge, model_prob, market_price, raw_kelly_size)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    market.id,
+                    "YES" if model_result.probability >= 0.5 else "NO",
+                    0.0,
+                    model_result.probability,
+                    market.yes_price,
+                    0.0,
+                ),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("main._persist_weak_signal: %s", exc)
+
+
 def _is_halted(db_path: str | None = None) -> bool:
     """Return True if bot_halted flag is set in system_config."""
     try:
@@ -142,11 +167,22 @@ def _job_scan(clob_client) -> None:
 
                 signal = compute_signal(market, model_result)
                 if signal is None:
+                    # No tradeable edge but we still have a model result — persist
+                    # a minimal signal row so the dashboard shows model probabilities
+                    _persist_weak_signal(market, model_result)
                     continue
 
                 approved = approve(signal, mode)
                 if approved is None:
                     continue
+
+                # Build human-readable trade rationale
+                rationale = (
+                    f"{signal.direction} | model={signal.model_prob:.1%} "
+                    f"market={signal.market_price:.1%} "
+                    f"edge={signal.adjusted_edge:+.1%} "
+                    f"size=${approved.final_size:.0f} USDC"
+                )
 
                 # Place order
                 if mode == "live":
@@ -165,6 +201,7 @@ def _job_scan(clob_client) -> None:
                         approved.signal.direction,
                         approved.final_size,
                         approved.signal.market_price,
+                        rationale,
                     )
 
             except Exception as exc:  # noqa: BLE001

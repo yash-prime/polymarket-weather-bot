@@ -28,6 +28,7 @@ def place_limit_order(
     direction: str,
     size: float,
     price: float,
+    rationale: str | None = None,
     db_path: str | None = None,
 ) -> str | None:
     """
@@ -43,7 +44,7 @@ def place_limit_order(
     order_id = _make_paper_order_id(market_id, direction)
     simulated_fill_price = price  # Paper mode fills at the given limit price
 
-    _write_paper_trade(market_id, direction, size, simulated_fill_price, order_id, db_path)
+    _write_paper_trade(market_id, direction, size, simulated_fill_price, order_id, rationale, db_path)
     _upsert_paper_position(market_id, direction, size, simulated_fill_price, db_path)
 
     logger.info(
@@ -107,6 +108,7 @@ def _write_paper_trade(
     size: float,
     fill_price: float,
     order_id: str,
+    rationale: str | None,
     db_path: str | None,
 ) -> None:
     try:
@@ -115,9 +117,9 @@ def _write_paper_trade(
         with get_connection(db_path) as conn:
             conn.execute(
                 "INSERT INTO paper_trades "
-                "(market_id, direction, final_size, simulated_fill_price, status) "
-                "VALUES (?, ?, ?, ?, 'open')",
-                (market_id, direction, size, fill_price),
+                "(market_id, direction, final_size, simulated_fill_price, status, rationale) "
+                "VALUES (?, ?, ?, ?, 'open', ?)",
+                (market_id, direction, size, fill_price, rationale),
             )
             conn.commit()
     except Exception as exc:  # noqa: BLE001

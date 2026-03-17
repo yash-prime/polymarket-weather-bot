@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     final_size           REAL NOT NULL,
     simulated_fill_price REAL,
     status               TEXT NOT NULL,  -- open|filled|cancelled
+    rationale            TEXT,           -- human-readable reason for the trade
     created_at           TEXT DEFAULT (datetime('now')),
     closed_at            TEXT
 );
