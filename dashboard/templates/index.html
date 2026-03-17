@@ -73,9 +73,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-heigh
 .card-body{padding:12px 14px}
 
 /* ── Table ───────────────────────────────────────────────── */
-.tbl-wrap{overflow-x:auto}
+.tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 280px)}
 table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:13px}
-thead{position:sticky;top:46px;z-index:10;background:var(--bg1);pointer-events:none}
+thead{position:sticky;top:0;z-index:10;background:var(--bg1)}
 thead tr{border-bottom:1px solid var(--border)}
 th{padding:6px 10px;text-align:left;color:var(--muted);font-weight:500;white-space:nowrap;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
 th.num{text-align:right}
