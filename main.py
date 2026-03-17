@@ -399,6 +399,19 @@ async def main() -> None:
     scheduler.start()
     logger.info("main: scheduler started with %d jobs", len(scheduler.get_jobs()))
 
+    # 6a. Run all jobs immediately at startup — dashboard shows live data from launch
+    loop = asyncio.get_event_loop()
+    logger.info("main: startup — fetching markets...")
+    await loop.run_in_executor(None, lambda: _job_scan(clob_client))
+    logger.info("main: startup — parsing markets with LLM...")
+    await loop.run_in_executor(None, _job_llm_parse)
+    logger.info("main: startup — snapshotting portfolio...")
+    await loop.run_in_executor(
+        None,
+        lambda: __import__("trading.portfolio", fromlist=["job_portfolio_snapshot"])
+                .job_portfolio_snapshot(settings.TRADING_MODE),
+    )
+
     # 7. Block until SIGINT / SIGTERM
     stop_event = asyncio.Event()
 

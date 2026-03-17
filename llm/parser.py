@@ -47,19 +47,23 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = """You are a weather market parser. Extract structured data from Polymarket
 weather prediction questions and return ONLY valid JSON with these fields:
 {
-  "city": string (city name),
-  "lat": float (decimal degrees, use known lat for the city),
-  "lon": float (decimal degrees, use known lon for the city),
+  "city": string (city or region name; for hurricanes use the most relevant coastal city),
+  "lat": float (decimal degrees, use known lat for the city/region),
+  "lon": float (decimal degrees, use known lon for the city/region),
   "metric": one of ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "wind_speed_10m_max"],
-  "threshold": float (the numeric value in the question),
+  "threshold": float (the numeric value in the question; for hurricane/storm questions use 0.0),
   "unit": "fahrenheit" | "celsius" | "inches" | "mm" | "mph" | "kmh",
   "operator": ">" | ">=" | "<" | "<=" | "==",
   "window_start": "YYYY-MM-DD",
   "window_end": "YYYY-MM-DD",
   "aggregation": "any" | "all" | "total",
   "resolution_source": "nws_official" | "metar" | "model_grid" | "unknown",
+  "market_type": "temperature" | "precipitation" | "wind" | "hurricane" | "storm" | "tornado" | "other",
   "parse_status": "success"
 }
+For hurricane/tropical storm/tornado questions: set market_type accordingly, use wind_speed_10m_max as
+metric, use the most relevant US coastal coordinates (Gulf Coast: 25.0,-90.0; Atlantic: 25.0,-75.0;
+Eastern Seaboard: 35.0,-75.0), and threshold=0.0.
 Return only the JSON object, no explanation."""
 
 # Regex patterns for the most common question formats
@@ -94,6 +98,29 @@ _PATTERNS = [
         re.IGNORECASE,
     ),
 ]
+
+# Hurricane/storm/tornado question patterns — no threshold, use basin coordinates
+_STORM_PATTERNS = [
+    re.compile(r"hurricane", re.IGNORECASE),
+    re.compile(r"tropical\s+storm", re.IGNORECASE),
+    re.compile(r"named\s+storm", re.IGNORECASE),
+    re.compile(r"category\s+[1-5]", re.IGNORECASE),
+    re.compile(r"cyclone", re.IGNORECASE),
+    re.compile(r"\btornado", re.IGNORECASE),
+    re.compile(r"landfall", re.IGNORECASE),
+    re.compile(r"hurricane\s+season", re.IGNORECASE),
+]
+
+# Basin/region → representative monitoring coords (near main landfall risk area)
+_STORM_REGION_COORDS = {
+    # US Gulf Coast — most hurricane questions target this area
+    "gulf":     ("Gulf Coast", 25.0, -90.0),
+    "atlantic": ("Atlantic Basin", 25.0, -75.0),
+    "florida":  ("Florida Coast", 25.5, -80.5),
+    "texas":    ("Texas Coast", 27.8, -97.4),
+    "carolina": ("Carolina Coast", 34.0, -77.9),
+    "default":  ("Gulf Coast", 25.0, -90.0),
+}
 
 # Known city → (lat, lon) for regex path (best-effort, not exhaustive)
 _CITY_COORDS: dict[str, tuple[float, float]] = {
@@ -188,9 +215,13 @@ def parse(question: str, db_path: str | None = None) -> dict[str, Any]:
     # --- Path 1: OpenRouter (if configured) or Ollama ---
     result = _try_llm(question)
 
-    # --- Path 2: Regex fallback ---
+    # --- Path 2: Regex fallback (temperature/precipitation) ---
     if result is None:
         result = _try_regex(question)
+
+    # --- Path 2b: Storm/hurricane regex fallback ---
+    if result is None:
+        result = _try_storm_regex(question)
 
     # --- Path 3: Failure ---
     if result is None:
@@ -346,6 +377,52 @@ def _try_regex(question: str) -> dict[str, Any] | None:
         return result
 
     return None
+
+
+def _try_storm_regex(question: str) -> dict[str, Any] | None:
+    """
+    Detect hurricane/tropical-storm/tornado questions and assign representative
+    basin coordinates so the weather engine can fetch ambient conditions
+    (SST-correlated wind, pressure, temperature anomalies) for those markets.
+    """
+    is_storm = any(p.search(question) for p in _STORM_PATTERNS)
+    if not is_storm:
+        return None
+
+    q_lower = question.lower()
+
+    # Pick the most specific region
+    if any(w in q_lower for w in ("florida", "gulf", "mexico")):
+        region_key = "florida" if "florida" in q_lower else "gulf"
+    elif any(w in q_lower for w in ("texas",)):
+        region_key = "texas"
+    elif any(w in q_lower for w in ("carolina", "virginia", "northeast")):
+        region_key = "carolina"
+    elif any(w in q_lower for w in ("atlantic",)):
+        region_key = "atlantic"
+    else:
+        region_key = "default"
+
+    city, lat, lon = _STORM_REGION_COORDS[region_key]
+    window_start, window_end = _extract_dates(question)
+
+    return {
+        "city": city,
+        "lat": lat,
+        "lon": lon,
+        "metric": "wind_speed_10m_max",
+        "threshold": 0.0,
+        "unit": "mph",
+        "operator": ">",
+        "window_start": window_start,
+        "window_end": window_end,
+        "aggregation": "any",
+        "resolution_source": "unknown",
+        "market_type": "hurricane" if any(p.search(question) for p in [
+            re.compile(r"hurricane|cyclone|landfall|category", re.IGNORECASE)
+        ]) else "storm",
+        "parse_status": "regex_fallback",
+    }
 
 
 def _infer_metric_operator(

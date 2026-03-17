@@ -37,3 +37,5 @@ numpy==1.26.0
 
 # --- Historical weather ---
 meteostat==1.6.8
+fastapi==0.135.1
+uvicorn==0.42.0

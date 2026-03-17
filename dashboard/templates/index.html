@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Polymarket Weather Bot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:       #0d1117;
+  --bg1:      #161b22;
+  --bg2:      #1c2128;
+  --border:   #30363d;
+  --border2:  #21262d;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+  --green:    #3fb950;
+  --green-dim:#1a4226;
+  --red:      #f85149;
+  --red-dim:  #3d1c1c;
+  --yellow:   #e3b341;
+  --yellow-dim:#3d2f00;
+  --blue:     #58a6ff;
+  --blue-dim: #1c2d4a;
+  --orange:   #f0883e;
+  --purple:   #bc8cff;
+  --font-mono:'Fira Code',monospace;
+  --font-ui:  'Fira Sans','Segoe UI',sans-serif;
+  --radius:   6px;
+  --glow:     0 0 12px rgba(88,166,255,.15);
+}
+html{font-size:14px;scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;line-height:1.5}
+
+/* ── Layout ──────────────────────────────────────────────── */
+.layout{display:grid;grid-template-rows:auto 1fr;min-height:100vh}
+.main{display:grid;grid-template-columns:1fr 340px;gap:12px;padding:12px;max-width:1600px;margin:0 auto;width:100%}
+.col-left{display:flex;flex-direction:column;gap:12px;min-width:0}
+.col-right{display:flex;flex-direction:column;gap:12px}
+
+/* ── Header ─────────────────────────────────────────────── */
+.header{background:var(--bg1);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:100}
+.header-logo{font-family:var(--font-mono);font-weight:700;font-size:1rem;color:var(--blue);letter-spacing:.04em;white-space:nowrap}
+.header-logo span{color:var(--muted)}
+.header-spacer{flex:1}
+.badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:.75rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);letter-spacing:.06em;text-transform:uppercase}
+.badge-paper{background:var(--blue-dim);color:var(--blue);border:1px solid var(--blue)}
+.badge-live{background:#2d1b00;color:var(--orange);border:1px solid var(--orange)}
+.badge-running{background:var(--green-dim);color:var(--green);border:1px solid var(--green)}
+.badge-halted{background:var(--red-dim);color:var(--red);border:1px solid var(--red)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── Controls row ────────────────────────────────────────── */
+.controls-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.btn{font-family:var(--font-mono);font-size:.75rem;font-weight:600;padding:4px 12px;border-radius:var(--radius);border:1px solid;cursor:pointer;transition:all 150ms ease;text-transform:uppercase;letter-spacing:.04em}
+.btn:hover{filter:brightness(1.15)}
+.btn-halt{background:var(--red-dim);color:var(--red);border-color:var(--red)}
+.btn-resume{background:var(--green-dim);color:var(--green);border-color:var(--green)}
+.btn-mode{background:var(--bg2);color:var(--muted);border-color:var(--border)}
+.btn-mode:hover{color:var(--text);border-color:var(--blue)}
+
+/* ── Card ────────────────────────────────────────────────── */
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.card-header{padding:10px 14px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.card-header svg{opacity:.6;flex-shrink:0}
+.card-body{padding:12px 14px}
+
+/* ── Table ───────────────────────────────────────────────── */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.78rem}
+thead tr{border-bottom:1px solid var(--border)}
+th{padding:6px 10px;text-align:left;color:var(--muted);font-weight:500;white-space:nowrap;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+tbody tr{border-bottom:1px solid var(--border2);transition:background 100ms}
+tbody tr:hover{background:var(--bg2)}
+td{padding:7px 10px;vertical-align:middle;max-width:300px}
+.td-q{font-family:var(--font-ui);font-size:.8rem;color:var(--text);white-space:normal;line-height:1.35}
+.td-q small{display:block;color:var(--muted);font-size:.72rem;margin-top:2px}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+.green{color:var(--green)}
+.red{color:var(--red)}
+.yellow{color:var(--yellow)}
+.blue{color:var(--blue)}
+.muted{color:var(--muted)}
+
+/* ── Status chips ────────────────────────────────────────── */
+.chip{display:inline-block;font-family:var(--font-mono);font-size:.68rem;padding:1px 7px;border-radius:3px;font-weight:600;white-space:nowrap}
+.chip-success{background:var(--green-dim);color:var(--green)}
+.chip-regex{background:var(--blue-dim);color:var(--blue)}
+.chip-failed{background:var(--red-dim);color:var(--red)}
+.chip-pending{background:var(--yellow-dim);color:var(--yellow)}
+
+/* ── Edge bar ────────────────────────────────────────────── */
+.edge-bar-wrap{display:flex;align-items:center;gap:6px;min-width:80px}
+.edge-bar-track{flex:1;height:4px;background:var(--bg2);border-radius:2px;overflow:hidden}
+.edge-bar-fill{height:100%;border-radius:2px;transition:width .3s ease}
+
+/* ── Log panel ───────────────────────────────────────────── */
+.log-box{background:var(--bg);border:1px solid var(--border2);border-radius:var(--radius);padding:10px;height:320px;overflow-y:auto;font-family:var(--font-mono);font-size:.72rem;line-height:1.6}
+.log-box::-webkit-scrollbar{width:4px}
+.log-box::-webkit-scrollbar-track{background:transparent}
+.log-box::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.log-line{white-space:pre-wrap;word-break:break-all}
+.log-info{color:var(--muted)}
+.log-warn{color:var(--yellow)}
+.log-error{color:var(--red)}
+.log-debug{color:#555}
+
+/* ── Bar chart (weights) ──────────────────────────────────── */
+.bar-list{display:flex;flex-direction:column;gap:8px}
+.bar-item{display:grid;grid-template-columns:130px 1fr 50px;align-items:center;gap:8px;font-size:.78rem}
+.bar-label{color:var(--text);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:8px;background:var(--bg2);border-radius:4px;overflow:hidden}
+.bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--blue),var(--purple));transition:width .4s ease}
+.bar-val{font-family:var(--font-mono);font-size:.75rem;color:var(--muted);text-align:right}
+
+/* ── Portfolio stat grid ─────────────────────────────────── */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat-box{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);padding:10px 12px}
+.stat-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px}
+.stat-val{font-family:var(--font-mono);font-size:1.1rem;font-weight:600}
+
+/* ── Mini positions table ─────────────────────────────────── */
+.pos-list{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.pos-row{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border-radius:var(--radius);font-size:.75rem}
+.pos-dir{font-family:var(--font-mono);font-weight:700;width:36px;text-align:center;padding:1px 4px;border-radius:3px;font-size:.7rem}
+.pos-dir.yes{background:var(--green-dim);color:var(--green)}
+.pos-dir.no{background:var(--red-dim);color:var(--red)}
+.pos-q{flex:1;font-family:var(--font-ui);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pos-size{font-family:var(--font-mono);color:var(--muted);white-space:nowrap}
+
+/* ── Trade rows ──────────────────────────────────────────── */
+.trade-row{border-bottom:1px solid var(--border2);padding:8px 0}
+.trade-row:last-child{border-bottom:none}
+.trade-meta{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.trade-q{font-family:var(--font-ui);font-size:.78rem;color:var(--muted);line-height:1.3}
+.trade-rationale{font-size:.72rem;color:var(--muted);margin-top:3px;font-style:italic}
+
+/* ── Refresh ticker ──────────────────────────────────────── */
+.refresh-bar{height:2px;background:var(--border2);position:relative;overflow:hidden}
+.refresh-progress{position:absolute;top:0;left:0;height:100%;background:var(--blue);opacity:.6;transition:width linear}
+
+/* ── Empty states ─────────────────────────────────────────── */
+.empty{color:var(--muted);font-size:.8rem;padding:20px;text-align:center;font-family:var(--font-mono)}
+
+/* ── Responsive ─────────────────────────────────────────────*/
+@media(max-width:900px){
+  .main{grid-template-columns:1fr}
+  .col-right{order:-1}
+  .stat-grid{grid-template-columns:repeat(4,1fr)}
+}
+@media(max-width:500px){
+  .stat-grid{grid-template-columns:1fr 1fr}
+  .bar-item{grid-template-columns:80px 1fr 40px}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ── Header ─────────────────────────────────────────────── -->
+<header class="header">
+  <div class="header-logo">⛅ Weather<span>/</span>Bot</div>
+  <span id="badge-mode" class="badge badge-paper">PAPER</span>
+  <span id="badge-status" class="badge badge-running"><span class="dot"></span> RUNNING</span>
+  <div class="header-spacer"></div>
+  <div class="controls-bar">
+    <span style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono)">Edge:</span>
+    <input id="ctrl-edge" type="number" min="0.01" max="0.5" step="0.01"
+      style="width:60px;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:.78rem;padding:3px 6px;border-radius:4px"
+      title="Min edge threshold" onchange="setControl('min_edge_threshold', this.value)"/>
+    <span style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono)">Size:</span>
+    <input id="ctrl-size" type="number" min="1" max="500" step="1"
+      style="width:64px;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:.78rem;padding:3px 6px;border-radius:4px"
+      title="Max position USDC" onchange="setControl('max_position_usdc', this.value)"/>
+    <button id="btn-mode" class="btn btn-mode" onclick="toggleMode()" title="Toggle paper/live">PAPER</button>
+    <button id="btn-halt" class="btn btn-halt" onclick="toggleHalt()">HALT BOT</button>
+  </div>
+</header>
+
+<!-- refresh progress bar -->
+<div class="refresh-bar"><div id="refresh-prog" class="refresh-progress" style="width:0%"></div></div>
+
+<!-- ── Main grid ──────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- LEFT COLUMN ─────────────────────────────────────────── -->
+  <div class="col-left">
+
+    <!-- Active Markets -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Active Markets
+        <span id="markets-count" style="margin-left:auto;font-size:.72rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--blue)">—</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="min-width:220px">Question</th>
+              <th class="num">Price</th>
+              <th class="num">Model%</th>
+              <th class="num">Edge</th>
+              <th>Weather</th>
+              <th>Status</th>
+              <th>Volume</th>
+            </tr>
+          </thead>
+          <tbody id="markets-tbody">
+            <tr><td colspan="7" class="empty">Loading markets…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Trade Log -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        Trade Log
+        <span id="trades-mode" style="margin-left:4px;font-size:.7rem;color:var(--muted)">(paper)</span>
+      </div>
+      <div class="card-body" id="trades-body">
+        <div class="empty">No trades yet.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN ────────────────────────────────────────── -->
+  <div class="col-right">
+
+    <!-- Portfolio -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        Portfolio
+      </div>
+      <div class="card-body">
+        <div class="stat-grid" id="portfolio-stats">
+          <div class="stat-box"><div class="stat-label">P&amp;L</div><div class="stat-val muted">—</div></div>
+          <div class="stat-box"><div class="stat-label">Positions</div><div class="stat-val muted">—</div></div>
+          <div class="stat-box"><div class="stat-label">Day Loss</div><div class="stat-val muted">—</div></div>
+          <div class="stat-box"><div class="stat-label">Balance</div><div class="stat-val muted">—</div></div>
+        </div>
+        <div class="pos-list" id="positions-list"></div>
+      </div>
+    </div>
+
+    <!-- Ensemble Weights -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Ensemble Weights
+      </div>
+      <div class="card-body">
+        <div class="bar-list" id="weights-list">
+          <div class="empty">No calibration data yet.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bot Log -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Bot Log
+        <span id="log-tail-label" style="margin-left:auto;font-size:.68rem;color:var(--muted)">last 100 lines</span>
+      </div>
+      <div class="card-body" style="padding:8px">
+        <div class="log-box" id="log-box">
+          <span class="log-info">Connecting to bot log…</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /main -->
+</div><!-- /layout -->
+
+<script>
+// ── State ──────────────────────────────────────────────────
+let _halted = false;
+let _mode   = 'paper';
+let _refreshTimer = null;
+const INTERVAL = 5000; // 5s
+
+// ── Fetch helpers ──────────────────────────────────────────
+async function fetchJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+
+// ── Format helpers ─────────────────────────────────────────
+function pct(v){ return v==null ? '—' : (v*100).toFixed(1)+'%' }
+function usd(v){ return v==null ? '—' : '$'+Number(v).toFixed(2) }
+function vol(v){ return v==null ? '—' : Number(v)>=1000 ? (v/1000).toFixed(1)+'k' : Number(v).toFixed(0) }
+function cls(v,pos){ return v==null?'muted':v>0?pos:'red' }
+function edgeColor(e){ return e==null?'muted': e>=0.15?'green': e>=0.08?'yellow':'red' }
+function statusChip(s){
+  if(!s) return '<span class="chip chip-pending">—</span>';
+  if(s==='success') return '<span class="chip chip-success">parsed</span>';
+  if(s==='regex_fallback') return '<span class="chip chip-regex">regex</span>';
+  if(s==='failed') return '<span class="chip chip-failed">failed</span>';
+  return `<span class="chip chip-pending">${s}</span>`;
+}
+function esc(s){ const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
+
+// ── Refresh progress bar ────────────────────────────────────
+let _progStart = Date.now();
+function tickProgress(){
+  const elapsed = Date.now() - _progStart;
+  const pct2 = Math.min(100, (elapsed/INTERVAL)*100);
+  document.getElementById('refresh-prog').style.width = pct2+'%';
+  if(pct2<100) requestAnimationFrame(tickProgress);
+}
+function resetProgress(){ _progStart=Date.now(); requestAnimationFrame(tickProgress); }
+
+// ── Update Status ───────────────────────────────────────────
+async function updateStatus(){
+  try{
+    const d = await fetchJSON('/api/status');
+    _halted = d.halted;
+    _mode   = d.mode || 'paper';
+
+    const mBadge = document.getElementById('badge-mode');
+    mBadge.className = 'badge ' + (_mode==='live'?'badge-live':'badge-paper');
+    mBadge.textContent = _mode.toUpperCase();
+
+    const sBadge = document.getElementById('badge-status');
+    sBadge.className = 'badge ' + (_halted?'badge-halted':'badge-running');
+    sBadge.innerHTML = (_halted?'':'<span class="dot"></span> ') + (_halted?'HALTED':'RUNNING');
+
+    const btn = document.getElementById('btn-halt');
+    btn.className = 'btn ' + (_halted?'btn-resume':'btn-halt');
+    btn.textContent = _halted ? 'RESUME BOT' : 'HALT BOT';
+
+    const mBtn = document.getElementById('btn-mode');
+    mBtn.textContent = _mode.toUpperCase();
+
+    const edge = document.getElementById('ctrl-edge');
+    if(edge && document.activeElement!==edge) edge.value = d.min_edge_threshold;
+    const size = document.getElementById('ctrl-size');
+    if(size && document.activeElement!==size) size.value = d.max_position_usdc;
+  } catch(e){ console.warn('status error',e); }
+}
+
+// ── Update Markets ──────────────────────────────────────────
+async function updateMarkets(){
+  try{
+    const d = await fetchJSON('/api/markets');
+    document.getElementById('markets-count').textContent = d.total;
+    const tbody = document.getElementById('markets-tbody');
+    if(!d.markets||d.markets.length===0){
+      tbody.innerHTML='<tr><td colspan="7" class="empty">No markets yet — bot is fetching…</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.markets.map(m=>{
+      const price = pct(m.yes_price);
+      const model = m.model_prob!=null ? `<span class="${m.model_prob>m.yes_price?'green':'red'}">${pct(m.model_prob)}</span>` : '<span class="muted">—</span>';
+      const edge  = m.edge!=null ? `<span class="${edgeColor(m.edge)}">${m.edge>=0?'+':''}${pct(m.edge)}</span>` : '<span class="muted">—</span>';
+      const weather = m.weather_summary ? `<span class="blue">${esc(m.weather_summary)}</span>` : '<span class="muted">—</span>';
+      const city = m.city && m.city!=='—' ? `<small>${esc(m.city)} · ${esc(m.metric||'')} ${esc(m.operator||'')} ${m.threshold!=null?m.threshold:''}</small>` : '';
+      return `<tr>
+        <td class="td-q">${esc(m.question)}${city}</td>
+        <td class="num">${price}</td>
+        <td class="num">${model}</td>
+        <td class="num">${edge}</td>
+        <td>${weather}</td>
+        <td>${statusChip(m.parse_status)}</td>
+        <td class="num muted">${vol(m.volume)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e){ console.warn('markets error',e); }
+}
+
+// ── Update Trades ───────────────────────────────────────────
+async function updateTrades(){
+  try{
+    const d = await fetchJSON('/api/trades');
+    document.getElementById('trades-mode').textContent = `(${_mode})`;
+    const el = document.getElementById('trades-body');
+    if(!d.trades||d.trades.length===0){
+      el.innerHTML='<div class="empty">No trades yet — waiting for a signal with enough edge.</div>';
+      return;
+    }
+    el.innerHTML = d.trades.map(t=>{
+      const dir  = t.direction==='YES'
+        ? `<span class="chip chip-success">YES</span>`
+        : `<span class="chip chip-failed">NO</span>`;
+      const ts = t.created_at ? t.created_at.split('T')[0]+' '+t.created_at.split('T')[1]?.slice(0,5) : '';
+      return `<div class="trade-row">
+        <div class="trade-meta">
+          ${dir}
+          <span class="num" style="font-family:var(--font-mono);font-size:.78rem">${usd(t.size)} @ ${pct(t.price)}</span>
+          <span class="muted" style="font-size:.7rem;margin-left:auto">${ts}</span>
+        </div>
+        <div class="trade-q">${esc(t.question||t.market_id)}</div>
+        ${t.rationale?`<div class="trade-rationale">${esc(t.rationale)}</div>`:''}
+      </div>`;
+    }).join('');
+  } catch(e){ console.warn('trades error',e); }
+}
+
+// ── Update Portfolio ────────────────────────────────────────
+async function updatePortfolio(){
+  try{
+    const d = await fetchJSON('/api/portfolio');
+    const s = d.snapshot || {};
+    const pnl = s.total_pnl!=null ? s.total_pnl : null;
+    const pnlColor = pnl==null?'muted': pnl>=0?'green':'red';
+
+    document.getElementById('portfolio-stats').innerHTML = `
+      <div class="stat-box">
+        <div class="stat-label">Total P&amp;L</div>
+        <div class="stat-val ${pnlColor}">${usd(pnl)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Positions</div>
+        <div class="stat-val blue">${d.positions?.length ?? '—'}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Day Loss</div>
+        <div class="stat-val ${s.daily_loss_pct!=null&&s.daily_loss_pct<0?'red':'muted'}">${s.daily_loss_pct!=null?(s.daily_loss_pct*100).toFixed(2)+'%':'—'}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Realized</div>
+        <div class="stat-val muted">${usd(s.realized_pnl)}</div>
+      </div>`;
+
+    const posEl = document.getElementById('positions-list');
+    if(!d.positions||d.positions.length===0){
+      posEl.innerHTML='';
+      return;
+    }
+    posEl.innerHTML = d.positions.map(p=>`
+      <div class="pos-row">
+        <span class="pos-dir ${(p.direction||'').toLowerCase()}">${p.direction}</span>
+        <span class="pos-q" title="${esc(p.question||p.market_id)}">${esc(p.question||p.market_id)}</span>
+        <span class="pos-size">${usd(p.size)}</span>
+      </div>`).join('');
+  } catch(e){ console.warn('portfolio error',e); }
+}
+
+// ── Update Weights ──────────────────────────────────────────
+async function updateWeights(){
+  try{
+    const d = await fetchJSON('/api/weights');
+    const el = document.getElementById('weights-list');
+    if(!d.weights||d.weights.length===0){
+      el.innerHTML='<div class="empty">No calibration data yet.</div>';
+      return;
+    }
+    const maxW = Math.max(...d.weights.map(w=>w.weight||0), 0.001);
+    el.innerHTML = d.weights.map(w=>{
+      const pct2 = Math.round((w.weight/maxW)*100);
+      return `<div class="bar-item">
+        <span class="bar-label" title="${w.source}">${esc(w.source)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct2}%"></div></div>
+        <span class="bar-val">${(w.weight*100).toFixed(0)}%</span>
+      </div>`;
+    }).join('');
+  } catch(e){ console.warn('weights error',e); }
+}
+
+// ── Update Logs ─────────────────────────────────────────────
+async function updateLogs(){
+  try{
+    const d = await fetchJSON('/api/logs');
+    const box = document.getElementById('log-box');
+    const wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    box.innerHTML = (d.lines||[]).map(line=>{
+      let cls2='log-info';
+      if(/WARNING/.test(line)) cls2='log-warn';
+      else if(/ERROR|CRITICAL/.test(line)) cls2='log-error';
+      else if(/DEBUG/.test(line)) cls2='log-debug';
+      return `<div class="log-line ${cls2}">${esc(line)}</div>`;
+    }).join('');
+    if(wasAtBottom) box.scrollTop = box.scrollHeight;
+  } catch(e){ console.warn('logs error',e); }
+}
+
+// ── Controls ────────────────────────────────────────────────
+async function setControl(key, val){
+  await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[key]:val})});
+  await updateStatus();
+}
+async function toggleHalt(){
+  await setControl('bot_halted', _halted?'0':'1');
+}
+async function toggleMode(){
+  await setControl('trading_mode', _mode==='paper'?'live':'paper');
+}
+
+// ── Refresh loop ─────────────────────────────────────────────
+async function refreshAll(){
+  await Promise.allSettled([
+    updateStatus(),
+    updateMarkets(),
+    updateTrades(),
+    updatePortfolio(),
+    updateWeights(),
+    updateLogs(),
+  ]);
+  resetProgress();
+  _refreshTimer = setTimeout(refreshAll, INTERVAL);
+}
+
+// ── Boot ─────────────────────────────────────────────────────
+refreshAll();
+</script>
+</body>
+</html>
