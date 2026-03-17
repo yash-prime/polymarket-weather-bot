@@ -30,7 +30,7 @@ An automated Python trading bot that exploits pricing inefficiencies in Polymark
 | **Ollama Client** | `llm/ollama_client.py` | Ollama HTTP wrapper with startup health-check |
 | **Parser** | `llm/parser.py` | Market question → structured JSON (Ollama → regex fallback → skip) |
 | **Analyst** | `llm/analyst.py` | Resolution risk (Claude/Ollama), narration (Ollama), trade commentary (Claude/Ollama) |
-| **Scanner** | `market/scanner.py` | Gamma API market fetch + filter; triggers async LLM parse job |
+| **Scanner** | `market/scanner.py` | Gamma API market fetch + filter; writes new markets to DB as `parse_status="pending"` |  # FIXED: scanner does not trigger LLM parse job — it writes to DB; parse runs as separate APScheduler job
 | **Signal** | `market/signal.py` | Edge calculation with corrected Kelly Criterion + clamped time-decay |
 | **Risk Manager** | `trading/risk.py` | All guardrails; reads from `positions`/`paper_positions` DB; clamps final size |
 | **Trader (Live)** | `trading/trader.py` | `py-clob-client` wrapper; place/cancel/stale-cleanup with retries |

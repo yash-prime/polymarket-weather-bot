@@ -206,7 +206,7 @@ class Market:
 class Signal:
     market_id: str
     direction: str              # "YES" | "NO"
-    raw_kelly_size: float       # Kelly output in USDC (before risk clamping)
+    raw_kelly_size: float       # Kelly fraction of bankroll (before risk clamping)  # FIXED: was "in USDC" — contradicted Risk Manager which multiplies by bankroll
     adjusted_edge: float        # Final edge after time-decay and liquidity penalty
     model_prob: float           # From ModelResult
     market_price: float         # From Market
@@ -215,11 +215,11 @@ class Signal:
 ### `ApprovedSignal` — output of Risk Manager
 
 ```python
-# trading/models.py
+# trading/models.py  # FIXED: confirmed canonical location (was ambiguous with market/models.py)
 @dataclass
 class ApprovedSignal:
     signal: Signal
-    final_size: float           # min(raw_kelly_size, MAX_POSITION_USDC)
+    final_size: float           # min(bankroll * raw_kelly_size, MAX_POSITION_USDC)  # FIXED: raw_kelly_size is a fraction, multiplied by bankroll here
     mode: str                   # "live" | "paper"
 ```
 
@@ -377,7 +377,7 @@ def compute_signal(market: Market, model_result: ModelResult) -> Signal | None:
         return Signal(
             market_id=market.id,
             direction=direction,
-            raw_kelly_size=raw_kelly_size,   # fraction of bankroll — Risk Manager applies $cap
+            raw_kelly_size=raw_kelly_size,   # fraction of bankroll (0.0–1.0) — Risk Manager multiplies by bankroll and applies $cap
             adjusted_edge=adjusted_edge,
             model_prob=model_prob,
             market_price=market_price,
@@ -635,6 +635,13 @@ CREATE TABLE IF NOT EXISTS system_config (
 -- Default system config rows:
 INSERT OR IGNORE INTO system_config VALUES ('bot_halted', 'false', datetime('now'));
 INSERT OR IGNORE INTO system_config VALUES ('trading_mode', 'paper', datetime('now'));
+
+-- FIXED: market_overrides table was referenced in Dashboard Controls but missing from schema
+CREATE TABLE IF NOT EXISTS market_overrides (
+    market_id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,        -- "skip" | "force"
+    updated_at TEXT DEFAULT (datetime('now'))
+);
 
 CREATE INDEX IF NOT EXISTS idx_markets_parse_status ON markets(parse_status);
 CREATE INDEX IF NOT EXISTS idx_trades_market_id ON trades(market_id);
@@ -918,7 +925,7 @@ async def _consumer():
 | 💰 Position Size | `system_config.max_position_usdc = "<value>"` |
 | 🔒 Per-Market Lock | `market_overrides.market_id = "skip"|"force"` |
 
-> `main.py` reads all config from `system_config` DB table at the start of each job — never from in-memory state after startup. This makes dashboard control writes race-condition-free.
+> **Config source clarification:** Static config (edge thresholds, Kelly fraction, rate limits, etc.) loads from `.env` at startup via `config/settings.py`. Dashboard-adjustable config (kill switch, trading mode, threshold overrides, position size overrides) is read from the `system_config` DB table at the start of each job — never from in-memory state after startup. This makes dashboard control writes race-condition-free.  # FIXED: clarified dual config source to prevent ambiguity
 
 ---
 
@@ -981,7 +988,7 @@ polymarket-weather-bot/
 │
 ├── market/
 │   ├── __init__.py
-│   ├── models.py             # Market + Signal + ApprovedSignal dataclasses
+│   ├── models.py             # Market + Signal dataclasses  # FIXED: ApprovedSignal is in trading/models.py
 │   ├── scanner.py            # Gamma API — find + filter weather markets
 │   └── signal.py             # Edge calculation + corrected Kelly signal
 │
