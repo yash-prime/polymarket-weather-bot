@@ -55,6 +55,19 @@ _CACHE_TTL_SECONDS: float = 30 * 60  # 30 minutes
 _cache: dict[tuple, tuple[float, ModelResult]] = {}
 _cache_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Raw data caches — shared across all threshold bins for the same location/date
+# ---------------------------------------------------------------------------
+_RAW_CACHE_TTL_SECONDS: float = 30 * 60  # 30 minutes
+
+# Open-Meteo: (round(lat,2), round(lon,2), variable, window_start) -> (timestamp, dict|None)
+_raw_om_cache: dict[tuple, tuple[float, Any]] = {}
+_raw_om_cache_lock = threading.Lock()
+
+# NOAA: (round(lat,2), round(lon,2)) -> (timestamp, dict|None)
+_raw_noaa_cache: dict[tuple, tuple[float, Any]] = {}
+_raw_noaa_cache_lock = threading.Lock()
+
 # Map canonical metric names (from LLM parser) → Open-Meteo API variable names
 # Open-Meteo ensemble returns per-member hourly series for these variables.
 _METRIC_TO_OM_VARIABLE: dict[str, str] = {
@@ -144,13 +157,13 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
             metric, market.id,
         )
 
-    # --- Fetch Open-Meteo ensemble ---
-    open_meteo_ensemble = _fetch_open_meteo(lat, lon, om_variable)
+    # --- Fetch Open-Meteo ensemble (raw cache shared across all threshold bins) ---
+    open_meteo_ensemble = _fetch_open_meteo_cached(lat, lon, om_variable, window_start)
 
-    # --- Fetch NOAA (US only) ---
+    # --- Fetch NOAA (US only, raw cache shared across all threshold bins) ---
     noaa_forecast = None
     if _is_us_coordinates(lat, lon):
-        noaa_forecast = _fetch_noaa(lat, lon)
+        noaa_forecast = _fetch_noaa_cached(lat, lon)
 
     # --- Read ECMWF from DB ---
     ecmwf_value = _fetch_ecmwf(lat, lon, metric, db_path)
@@ -208,6 +221,58 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
 # ---------------------------------------------------------------------------
 # Internal fetch helpers — each returns None on failure
 # ---------------------------------------------------------------------------
+
+
+def _fetch_open_meteo_cached(
+    lat: float, lon: float, variable: str | None, window_start: str
+) -> dict | None:
+    """Return Open-Meteo ensemble data, using a raw-data cache keyed by location+variable+date.
+
+    All threshold bins for the same city/variable/date share a single API call.
+    The cache TTL matches the result cache (30 minutes).
+    """
+    if variable is None:
+        return None
+    raw_key = (round(lat, 2), round(lon, 2), variable, window_start)
+    with _raw_om_cache_lock:
+        entry = _raw_om_cache.get(raw_key)
+        if entry is not None:
+            cached_at, cached_data = entry
+            if time.time() - cached_at < _RAW_CACHE_TTL_SECONDS:
+                logger.debug(
+                    "_fetch_open_meteo_cached: raw cache hit for %s", raw_key
+                )
+                return cached_data
+            del _raw_om_cache[raw_key]
+
+    data = _fetch_open_meteo(lat, lon, variable)
+    with _raw_om_cache_lock:
+        _raw_om_cache[raw_key] = (time.time(), data)
+    return data
+
+
+def _fetch_noaa_cached(lat: float, lon: float) -> dict | None:
+    """Return NOAA NWS forecast data, using a raw-data cache keyed by location.
+
+    All threshold bins for the same city share a single NOAA API call.
+    The cache TTL matches the result cache (30 minutes).
+    """
+    raw_key = (round(lat, 2), round(lon, 2))
+    with _raw_noaa_cache_lock:
+        entry = _raw_noaa_cache.get(raw_key)
+        if entry is not None:
+            cached_at, cached_data = entry
+            if time.time() - cached_at < _RAW_CACHE_TTL_SECONDS:
+                logger.debug(
+                    "_fetch_noaa_cached: raw cache hit for %s", raw_key
+                )
+                return cached_data
+            del _raw_noaa_cache[raw_key]
+
+    data = _fetch_noaa(lat, lon)
+    with _raw_noaa_cache_lock:
+        _raw_noaa_cache[raw_key] = (time.time(), data)
+    return data
 
 
 def _fetch_open_meteo(lat: float, lon: float, variable: str | None) -> dict | None:

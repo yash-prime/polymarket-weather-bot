@@ -6,6 +6,9 @@
 <title>Polymarket Weather Bot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛅</text></svg>">
+<meta name="description" content="Polymarket Weather Bot — Trading Dashboard">
+<meta name="theme-color" content="#0d1117">
 <style>
 /* ── Reset & Base ─────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -71,12 +74,15 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-heigh
 
 /* ── Table ───────────────────────────────────────────────── */
 .tbl-wrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.78rem}
+table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:13px}
+thead{position:sticky;top:46px;z-index:10;background:var(--bg1)}
 thead tr{border-bottom:1px solid var(--border)}
 th{padding:6px 10px;text-align:left;color:var(--muted);font-weight:500;white-space:nowrap;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+th.num{text-align:right}
 tbody tr{border-bottom:1px solid var(--border2);transition:background 100ms}
-tbody tr:hover{background:var(--bg2)}
-td{padding:7px 10px;vertical-align:middle;max-width:300px}
+tbody.group-rows tr:nth-child(even){background:rgba(255,255,255,0.02)}
+tbody.group-rows tr:hover{background:var(--bg2)}
+td{padding:10px 10px;vertical-align:middle;max-width:300px}
 .td-q{font-family:var(--font-ui);font-size:.8rem;color:var(--text);white-space:normal;line-height:1.35}
 .td-q small{display:block;color:var(--muted);font-size:.72rem;margin-top:2px}
 .num{font-variant-numeric:tabular-nums;text-align:right}
@@ -154,6 +160,17 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
 /* ── Empty states ─────────────────────────────────────────── */
 .empty{color:var(--muted);font-size:.8rem;padding:20px;text-align:center;font-family:var(--font-mono)}
 
+/* ── Market group headers ────────────────────────────────── */
+.market-group-header td{background:var(--bg2);padding:8px 12px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;cursor:pointer;user-select:none;border-bottom:1px solid var(--border)}
+.market-group-header:hover td{color:var(--text)}
+.group-arrow{display:inline-block;width:14px;font-size:10px;transition:transform .15s}
+
+/* ── Intel drawer ────────────────────────────────────────── */
+.intel-drawer{position:fixed;top:0;right:0;height:100vh;width:440px;background:var(--bg1);border-left:1px solid var(--border);z-index:200;transform:translateX(100%);transition:transform .25s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;box-shadow:-4px 0 24px rgba(0,0,0,.4)}
+.intel-drawer.open{transform:translateX(0)}
+.intel-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:199}
+.intel-backdrop.open{display:block}
+
 /* ── Responsive ─────────────────────────────────────────────*/
 @media(max-width:900px){
   .main{grid-template-columns:1fr}
@@ -185,8 +202,9 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
     <input id="ctrl-size" type="number" min="1" max="500" step="1"
       style="width:64px;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:.78rem;padding:3px 6px;border-radius:4px"
       title="Max position USDC" onchange="setControl('max_position_usdc', this.value)"/>
-    <button id="btn-mode" class="btn btn-mode" onclick="toggleMode()" title="Toggle paper/live">PAPER</button>
-    <button id="btn-halt" class="btn btn-halt" onclick="toggleHalt()">HALT BOT</button>
+    <button id="btn-intel" class="btn" onclick="openIntelDrawer()" aria-label="Open intelligence reports" style="border-color:var(--purple);color:var(--purple);background:rgba(188,140,255,.1)">INTEL</button>
+    <button id="btn-mode" class="btn btn-mode" onclick="toggleMode()" title="Toggle paper/live" aria-label="Toggle trading mode">PAPER</button>
+    <button id="btn-halt" class="btn btn-halt" onclick="toggleHalt()" aria-label="Halt trading bot">HALT BOT</button>
   </div>
 </header>
 
@@ -204,7 +222,12 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
       <div class="card-header">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Active Markets
-        <span id="markets-count" style="margin-left:auto;font-size:.72rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--blue)">—</span>
+      </div>
+      <div style="padding:8px 12px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px">
+        <input id="market-filter" type="text" placeholder="Filter markets…" aria-label="Filter markets"
+          style="flex:1;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-family:var(--font-ui);font-size:13px;padding:5px 10px;border-radius:var(--radius);outline:none"
+          oninput="filterMarkets(this.value)"/>
+        <span id="markets-count" style="font-size:.72rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--blue);white-space:nowrap">—</span>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -217,29 +240,13 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
               <th class="num">Model%</th>
               <th class="num">Edge</th>
               <th>Weather</th>
-              <th>Status</th>
-              <th>Volume</th>
+              <th class="num">Volume</th>
             </tr>
           </thead>
           <tbody id="markets-tbody">
-            <tr><td colspan="7" class="empty">Loading markets…</td></tr>
+            <tr><td colspan="8" class="empty">Loading markets…</td></tr>
           </tbody>
         </table>
-      </div>
-    </div>
-
-    <!-- Intelligence Reports -->
-    <div class="card">
-      <div class="card-header">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        Intelligence Reports
-        <span id="intel-count" style="font-size:.72rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--purple)">0</span>
-        <button id="btn-intel" onclick="generateReport()" style="margin-left:auto;font-family:var(--font-mono);font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);border:1px solid var(--purple);background:rgba(188,140,255,.1);color:var(--purple);cursor:pointer;letter-spacing:.04em;text-transform:uppercase">INTEL</button>
-      </div>
-      <div class="card-body" style="padding:8px">
-        <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:8px">
-          <div style="color:var(--muted);font-size:.8rem;padding:4px">No reports yet — click INTEL to generate.</div>
-        </div>
       </div>
     </div>
 
@@ -307,8 +314,22 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
   </div>
 </div><!-- /main -->
 
-
 </div><!-- /layout -->
+
+<!-- ── Intel Drawer ───────────────────────────────────────── -->
+<div class="intel-backdrop" id="intel-backdrop" onclick="closeIntelDrawer()"></div>
+<div class="intel-drawer" id="intel-drawer" role="dialog" aria-label="Intelligence Reports">
+  <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span style="font-size:.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Intelligence Reports</span>
+    <span id="intel-count" style="font-size:.72rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--purple)">0</span>
+    <button id="btn-intel-gen" onclick="generateReport()" style="margin-left:auto;font-family:var(--font-mono);font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);border:1px solid var(--purple);background:rgba(188,140,255,.1);color:var(--purple);cursor:pointer;letter-spacing:.04em;text-transform:uppercase" aria-label="Generate new intelligence report">INTEL</button>
+    <button onclick="closeIntelDrawer()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:2px 6px;border-radius:3px;line-height:1" aria-label="Close drawer">✕</button>
+  </div>
+  <div id="intel-reports-list" style="flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px">
+    <div style="color:var(--muted);font-size:.8rem;padding:8px">No reports yet — click INTEL to generate.</div>
+  </div>
+</div>
 
 <script>
 // ── State ──────────────────────────────────────────────────
@@ -358,7 +379,11 @@ function pct(v){ return v==null ? '—' : (v*100).toFixed(1)+'%' }
 function usd(v){ return v==null ? '—' : '$'+Number(v).toFixed(2) }
 function vol(v){ return v==null ? '—' : Number(v)>=1000 ? (v/1000).toFixed(1)+'k' : Number(v).toFixed(0) }
 function cls(v,pos){ return v==null?'muted':v>0?pos:'red' }
-function edgeColor(e){ return e==null?'muted': e>=0.15?'green': e>=0.08?'yellow':'red' }
+function edgeColor(e){
+  if(e==null) return 'muted';
+  if(Math.abs(e) < 0.005) return 'muted';  // near-zero = neutral
+  return e>=0.15?'green': e>=0.08?'yellow':'red';
+}
 function statusChip(s){
   if(!s) return '<span class="chip chip-pending">—</span>';
   if(s==='success') return '<span class="chip chip-success">parsed</span>';
@@ -413,40 +438,117 @@ async function updateStatus(){
 async function updateMarkets(){
   try{
     const d = await fetchJSON('/api/markets');
-    document.getElementById('markets-count').textContent = d.total;
-    const tbody = document.getElementById('markets-tbody');
-    if(!d.markets||d.markets.length===0){
-      tbody.innerHTML='<tr><td colspan="9" class="empty">No markets yet — bot is fetching…</td></tr>';
-      return;
-    }
-    tbody.innerHTML = d.markets.map(m=>{
-      const yesPrice  = pct(m.yes_price);
-      const noPrice   = m.no_price!=null ? pct(m.no_price) : '—';
+    const allMarkets = d.markets || [];
+    _allMarkets = allMarkets;  // store for filter
+    document.getElementById('markets-count').textContent = allMarkets.length;
+    renderMarkets(allMarkets);
+  } catch(e){ console.warn('markets error',e); }
+}
+
+let _allMarkets = [];
+let _filterQuery = '';
+
+function filterMarkets(q){
+  _filterQuery = q.toLowerCase();
+  renderMarkets(_allMarkets);
+}
+
+function renderMarkets(markets){
+  const tbody = document.getElementById('markets-tbody');
+  const q = _filterQuery;
+  const filtered = q ? markets.filter(m => (m.question||'').toLowerCase().includes(q) || (m.city||'').toLowerCase().includes(q)) : markets;
+
+  if(!filtered.length){
+    tbody.innerHTML='<tr><td colspan="8" class="empty">No markets match filter.</td></tr>';
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0,10);
+
+  // Group by end_date
+  const groups = {};
+  filtered.forEach(m => {
+    const dk = m.end_date ? m.end_date.slice(0,10) : 'unknown';
+    if(!groups[dk]) groups[dk] = [];
+    groups[dk].push(m);
+  });
+
+  // Sort group keys: today first, then future asc, then past desc
+  const keys = Object.keys(groups).sort((a,b) => {
+    if(a==='unknown') return 1;
+    if(b==='unknown') return -1;
+    const ap = a < today, bp = b < today;
+    if(ap && !bp) return 1;  // a past, b future → b first
+    if(!ap && bp) return -1;
+    return a.localeCompare(b);
+  });
+
+  let html = '';
+  keys.forEach(dk => {
+    const gMarkets = groups[dk];
+    const isPast = dk !== 'unknown' && dk < today;
+    const isToday = dk === today;
+    const validEdges = gMarkets.filter(m => m.edge != null);
+    const avgEdge = validEdges.length ? validEdges.reduce((s,m)=>s+m.edge,0)/validEdges.length : null;
+    const openCount = gMarkets.filter(m => m.open_direction).length;
+
+    let label = dk==='unknown' ? 'Unknown date' : isToday ? `Today  ${dk}` : dk;
+    const edgePart = avgEdge!=null ? `  avg edge ${avgEdge>=0?'+':''}${(avgEdge*100).toFixed(1)}%` : '';
+    const openPart = openCount ? `  ${openCount} open` : '';
+    const collapsed = isPast;  // past = collapsed by default
+    const groupId = 'g-' + dk.replace(/[^a-z0-9]/gi,'-');
+
+    html += `
+    <tr class="market-group-header" onclick="toggleGroup('${groupId}',this)">
+      <td colspan="8">
+        <span class="group-arrow" style="transform:${collapsed?'':'rotate(90deg)'}">▶</span>
+        ${label}
+        <span style="color:var(--muted);font-weight:400">(${gMarkets.length})</span>
+        <span style="font-family:var(--font-mono);color:${avgEdge==null?'var(--muted)':avgEdge>=0.08?'var(--green)':avgEdge>=0?'var(--yellow)':'var(--red)'}">${edgePart}</span>
+        ${openPart?`<span style="color:var(--blue)">${openPart}</span>`:''}
+      </td>
+    </tr>
+    <tbody id="${groupId}" style="${collapsed?'display:none':''}">
+    ${gMarkets.map(m => {
+      const yesPrice = pct(m.yes_price);
+      const noPrice = m.no_price!=null ? pct(m.no_price) : '—';
       const openPrice = m.start_price!=null ? pct(m.start_price) : '—';
       const model = m.model_prob!=null ? `<span class="${m.model_prob>m.yes_price?'green':'red'}">${pct(m.model_prob)}</span>` : '<span class="muted">—</span>';
-      const edge  = m.edge!=null ? `<span class="${edgeColor(m.edge)}">${m.edge>=0?'+':''}${pct(m.edge)}</span>` : '<span class="muted">—</span>';
+      const edgeEl = m.edge!=null ? `<span class="${edgeColor(m.edge)}">${m.edge>=0?'+':''}${pct(m.edge)}</span>` : '<span class="muted">—</span>';
       const weather = m.weather_summary ? `<span class="blue">${esc(m.weather_summary)}</span>` : '<span class="muted">—</span>';
       const startLabel = m.start_date ? `<small>since ${m.start_date.slice(0,10)}</small>` : '';
       const city = m.city && m.city!=='—' ? `<small>${esc(m.city)} · ${esc(m.metric||'')} ${esc(m.operator||'')} ${m.threshold!=null?m.threshold:''}</small>` : '';
-      const trClass = m.open_direction
-        ? `has-trade${m.open_direction==='NO'?' dir-no':''}`
-        : '';
-      const tradeBadge = m.open_direction
-        ? `<span class="trade-badge trade-badge-${m.open_direction.toLowerCase()}">${m.open_direction}</span>`
-        : '';
+      const trClass = m.open_direction ? `has-trade${m.open_direction==='NO'?' dir-no':''}` : '';
+      const tradeBadge = m.open_direction ? `<span class="trade-badge trade-badge-${m.open_direction.toLowerCase()}">${m.open_direction}</span>` : '';
+      const statusInline = m.parse_status && m.parse_status!=='success' ? statusChip(m.parse_status) : '';
       return `<tr class="${trClass}">
-        <td class="td-q">${esc(m.question)}${tradeBadge}${city}${startLabel}</td>
+        <td class="td-q">${esc(m.question)}${tradeBadge}${statusInline}${city}${startLabel}</td>
         <td class="num">${yesPrice}</td>
         <td class="num muted">${noPrice}</td>
         <td class="num muted">${openPrice}</td>
         <td class="num">${model}</td>
-        <td class="num">${edge}</td>
+        <td class="num">${edgeEl}</td>
         <td>${weather}</td>
-        <td>${statusChip(m.parse_status)}</td>
         <td class="num muted">${vol(m.volume)}</td>
       </tr>`;
-    }).join('');
-  } catch(e){ console.warn('markets error',e); }
+    }).join('')}
+    </tbody>`;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function toggleGroup(id, headerRow){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const arrow = headerRow.querySelector('.group-arrow');
+  if(el.style.display==='none'){
+    el.style.display='';
+    if(arrow) arrow.style.transform='rotate(90deg)';
+  } else {
+    el.style.display='none';
+    if(arrow) arrow.style.transform='';
+  }
 }
 
 // ── Update Trades ───────────────────────────────────────────
@@ -602,11 +704,29 @@ async function setControl(key, val){
   await updateStatus();
 }
 async function toggleHalt(){
+  if(!_halted){
+    if(!confirm('Halt the bot? All trading will stop immediately.')) return;
+  }
   await setControl('bot_halted', _halted?'0':'1');
 }
 async function toggleMode(){
   await setControl('trading_mode', _mode==='paper'?'live':'paper');
 }
+
+// ── Intel Drawer ─────────────────────────────────────────────
+function openIntelDrawer(){
+  document.getElementById('intel-drawer').classList.add('open');
+  document.getElementById('intel-backdrop').classList.add('open');
+  document.body.style.overflow='hidden';
+  loadReports();
+}
+function closeIntelDrawer(){
+  document.getElementById('intel-drawer').classList.remove('open');
+  document.getElementById('intel-backdrop').classList.remove('open');
+  document.body.style.overflow='';
+}
+// ESC closes drawer
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeIntelDrawer(); });
 
 // ── Refresh loop ─────────────────────────────────────────────
 async function refreshAll(){
@@ -699,7 +819,7 @@ async function loadReports(){
 }
 
 async function generateReport(){
-  const btn = document.getElementById('btn-intel');
+  const btn = document.getElementById('btn-intel-gen');
   if(_intelCooldown > 0) return;
 
   btn.disabled = true;
@@ -731,7 +851,6 @@ async function generateReport(){
 
 // ── Boot ─────────────────────────────────────────────────────
 refreshAll();
-loadReports();
 </script>
 </body>
 </html>

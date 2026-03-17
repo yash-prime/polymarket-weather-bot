@@ -35,8 +35,8 @@ LLM_PARSE_INTERVAL_MINUTES: int = int(os.getenv("LLM_PARSE_INTERVAL_MINUTES", "3
 STALE_ORDER_CHECK_MINUTES: int = int(os.getenv("STALE_ORDER_CHECK_MINUTES", "10"))
 
 # --- Rate Limits (calls per hour per source) ---
-RATE_LIMIT_OPEN_METEO: int = int(os.getenv("RATE_LIMIT_OPEN_METEO", "200"))
-RATE_LIMIT_NOAA: int = int(os.getenv("RATE_LIMIT_NOAA", "100"))
+RATE_LIMIT_OPEN_METEO: int = int(os.getenv("RATE_LIMIT_OPEN_METEO", "1000"))
+RATE_LIMIT_NOAA: int = int(os.getenv("RATE_LIMIT_NOAA", "500"))
 RATE_LIMIT_GAMMA: int = int(os.getenv("RATE_LIMIT_GAMMA", "60"))
 RATE_LIMIT_CLOB: int = int(os.getenv("RATE_LIMIT_CLOB", "120"))
 
