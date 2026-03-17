@@ -146,7 +146,17 @@ def get_active_markets(db_path: str | None = None) -> list[Market]:
             if days_to_resolve < settings.MIN_DAYS_TO_RESOLVE:
                 continue
 
-            parsed = json.loads(row["parsed"]) if row["parsed"] else None
+            parsed = None
+            if row["parsed"]:
+                try:
+                    parsed = json.loads(row["parsed"])
+                except json.JSONDecodeError:
+                    # Some rows stored with Python repr (single quotes) — convert
+                    import ast
+                    try:
+                        parsed = ast.literal_eval(row["parsed"])
+                    except Exception:
+                        parsed = None
 
             markets.append(
                 Market(
