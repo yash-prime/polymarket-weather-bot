@@ -91,10 +91,12 @@ async def api_markets():
                     m.end_date, m.start_date, m.start_price,
                     m.parse_status, m.parsed,
                     lc.parsed AS llm_parsed,
-                    lc.model AS llm_model
+                    lc.model AS llm_model,
+                    CASE WHEN pp.size > 0 THEN pp.direction ELSE NULL END AS open_direction
                 FROM markets m
                 LEFT JOIN llm_cache lc ON lc.question = m.question
-                ORDER BY m.volume DESC
+                LEFT JOIN paper_positions pp ON pp.market_id = m.id AND pp.size > 0
+                ORDER BY pp.size DESC NULLS LAST, m.volume DESC
                 LIMIT 50
             """).fetchall()
 
@@ -152,6 +154,7 @@ async def api_markets():
                 "edge": edge,
                 "weather_summary": weather_summary,
                 "llm_model": r["llm_model"],
+                "open_direction": r["open_direction"],
             })
 
         return {"markets": markets, "total": len(markets)}
