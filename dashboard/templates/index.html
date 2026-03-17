@@ -614,23 +614,58 @@ async function refreshAll(){
 let _intelCooldown = 0;
 let _intelCooldownTimer = null;
 
+function mdToHtml(md){
+  // Minimal markdown renderer: headers, bold, italic, bullets, hr, code, line breaks
+  let h = md
+    // Escape raw HTML first
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    // ═══ divider lines → styled separator
+    .replace(/═{3,}/g,'<div style="border-top:1px solid var(--border);margin:10px 0"></div>')
+    // ## H2 → section header
+    .replace(/^## (.+)$/gm,'<div style="font-size:.9rem;font-weight:700;color:var(--text);margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border2)">$1</div>')
+    // ### H3
+    .replace(/^### (.+)$/gm,'<div style="font-size:.82rem;font-weight:600;color:var(--blue);margin:10px 0 4px">$1</div>')
+    // **bold**
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    // *italic*
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    // `code`
+    .replace(/`([^`]+)`/g,'<code style="font-family:var(--font-mono);font-size:.78rem;background:var(--bg);padding:1px 4px;border-radius:3px;color:var(--orange)">$1</code>')
+    // Bullet lines starting with - or •
+    .replace(/^[-•] (.+)$/gm,'<div style="display:flex;gap:6px;margin:3px 0"><span style="color:var(--purple);flex-shrink:0">▸</span><span>$1</span></div>')
+    // Numbered list  1. item
+    .replace(/^(\d+)\. (.+)$/gm,'<div style="display:flex;gap:6px;margin:3px 0"><span style="color:var(--muted);font-family:var(--font-mono);font-size:.76rem;flex-shrink:0;min-width:18px">$1.</span><span>$2</span></div>')
+    // ▲ ▼ ◆ win/loss markers → colour
+    .replace(/▲ WIN/g,'<span style="color:var(--green);font-weight:600">▲ WIN</span>')
+    .replace(/▼ LOSS/g,'<span style="color:var(--red);font-weight:600">▼ LOSS</span>')
+    .replace(/◆ FLAT/g,'<span style="color:var(--muted);font-weight:600">◆ FLAT</span>')
+    // P&L colouring: +$X.XX green, -$X.XX red
+    .replace(/(\+\$[\d,]+\.\d+)/g,'<span style="color:var(--green)">$1</span>')
+    .replace(/(-\$[\d,]+\.\d+)/g,'<span style="color:var(--red)">$1</span>')
+    // Double newline → paragraph gap
+    .replace(/\n\n/g,'<div style="margin:6px 0"></div>')
+    // Single newline → break
+    .replace(/\n/g,'<br>');
+  return h;
+}
+
 async function loadReports(){
   try{
     const d = await fetchJSON('/api/intelligence-reports');
     const list = document.getElementById('intel-reports-list');
     document.getElementById('intel-count').textContent = d.reports.length;
     if(!d.reports.length){
-      list.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:8px">No reports generated yet.</div>';
+      list.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:8px">No reports yet — click INTEL to generate.</div>';
       return;
     }
     list.innerHTML = d.reports.map((r,i) => `
-      <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);overflow:hidden">
-        <div style="padding:8px 12px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--muted);font-family:var(--font-mono)">
-          <span style="color:var(--purple);font-weight:600">REPORT #${r.id}</span>
+      <div style="background:var(--bg2);border:1px solid ${i===0?'var(--purple)':'var(--border2)'};border-radius:var(--radius);overflow:hidden">
+        <div style="padding:7px 12px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--muted);font-family:var(--font-mono);background:${i===0?'rgba(188,140,255,.06)':'transparent'}">
+          <span style="color:var(--purple);font-weight:700">REPORT #${r.id}</span>
           <span>${r.generated_at.replace('T',' ').slice(0,16)} UTC</span>
-          ${i===0?'<span style="background:rgba(188,140,255,.15);color:var(--purple);padding:1px 6px;border-radius:4px;font-size:.68rem">LATEST</span>':''}
+          ${i===0?'<span style="background:rgba(188,140,255,.18);color:var(--purple);padding:1px 7px;border-radius:10px;font-size:.66rem;font-weight:600;letter-spacing:.05em">LATEST</span>':''}
         </div>
-        <div style="padding:12px 14px;font-size:.82rem;line-height:1.65;white-space:pre-wrap;color:var(--text);max-height:400px;overflow-y:auto">${esc(r.content)}</div>
+        <div style="padding:14px 16px;font-size:.8rem;line-height:1.7;color:var(--text);max-height:520px;overflow-y:auto">${mdToHtml(r.content)}</div>
       </div>
     `).join('');
   } catch(e){ console.warn('intel load error',e); }

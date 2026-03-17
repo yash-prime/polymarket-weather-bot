@@ -304,18 +304,23 @@ def api_generate_report():
     from llm.openrouter_client import generate as or_generate, is_configured
     from llm.ollama_client import generate as ollama_generate
 
+    from datetime import datetime, timezone
+
     with _db() as conn:
         positions = conn.execute("""
             SELECT p.market_id, p.direction, p.size, p.entry_price,
-                   p.current_price, p.unrealized_pnl,
-                   m.question, m.yes_price, m.end_date, m.volume,
+                   p.unrealized_pnl, m.question, m.yes_price, m.end_date,
+                   m.parsed,
                    (SELECT rationale FROM paper_trades
                     WHERE market_id = p.market_id
-                    ORDER BY created_at DESC LIMIT 1) as rationale
+                    ORDER BY created_at DESC LIMIT 1) as rationale,
+                   (SELECT adjusted_edge FROM signals
+                    WHERE market_id = p.market_id
+                    ORDER BY created_at DESC LIMIT 1) as edge_at_entry
             FROM paper_positions p
             JOIN markets m ON m.id = p.market_id
             WHERE p.size > 0 AND p.status = 'open'
-            ORDER BY p.unrealized_pnl DESC
+            ORDER BY m.end_date ASC
         """).fetchall()
 
         snap = conn.execute(
@@ -325,49 +330,110 @@ def api_generate_report():
     if not positions:
         raise HTTPException(status_code=400, detail="No open positions")
 
-    # Build position list text
-    pos_lines = []
+    # ── Build enriched position rows ───────────────────────────
+    import json as _json
+    now_utc = datetime.now(timezone.utc)
+    STARTING_CAPITAL = 2500.0
+
+    equity     = float(snap["total_equity"]) if snap else STARTING_CAPITAL
+    deployed   = sum(float(p["size"]) for p in positions)
+    unrealized = sum(float(p["unrealized_pnl"] or 0) for p in positions)
+    realized   = float(snap["realized_pnl"]) if snap else 0.0
+    total_pnl  = unrealized + realized
+
+    pos_rows = []
     for i, p in enumerate(positions, 1):
-        pnl = p["unrealized_pnl"] or 0
-        pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
-        rationale = p["rationale"] or "no rationale stored"
-        pos_lines.append(
-            f"{i}. [{p['direction']}] {p['question']}\n"
-            f"   Size: ${p['size']:.2f} | Entry: {p['entry_price']:.3f} | "
-            f"Current YES: {p['yes_price']:.3f} | P&L: {pnl_str}\n"
-            f"   Ends: {p['end_date']} | Rationale: {rationale}"
+        pnl    = float(p["unrealized_pnl"] or 0)
+        size   = float(p["size"])
+        entry  = float(p["entry_price"])
+        yes    = float(p["yes_price"])
+        edge   = float(p["edge_at_entry"]) if p["edge_at_entry"] else None
+        pnl_pct = (pnl / size * 100) if size else 0
+
+        # Days to expiry
+        try:
+            end_dt  = datetime.strptime(p["end_date"][:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            days_left = max(0, (end_dt - now_utc).days)
+        except Exception:
+            days_left = "?"
+
+        # Location from parsed JSON
+        location = "Unknown"
+        try:
+            parsed = _json.loads(p["parsed"] or "{}")
+            location = parsed.get("city") or "Unknown"
+        except Exception:
+            pass
+
+        direction = p["direction"]
+        win_loss  = "▲ WIN" if pnl > 0.05 else ("▼ LOSS" if pnl < -0.05 else "◆ FLAT")
+        edge_str  = f"{edge*100:+.1f}%" if edge is not None else "n/a"
+        rationale = (p["rationale"] or "none").strip()
+
+        pos_rows.append(
+            f"#{i:02d} | {win_loss} | {direction} | {location}\n"
+            f"    Q: {p['question']}\n"
+            f"    Size ${size:.0f} | Entry {entry:.3f} → Now {yes:.3f} | "
+            f"P&L {pnl:+.2f} ({pnl_pct:+.1f}%) | Edge@entry {edge_str} | "
+            f"Expires in {days_left}d\n"
+            f"    Rationale: {rationale}"
         )
 
-    equity = snap["total_equity"] if snap else 2500.0
-    deployed = sum(p["size"] for p in positions)
-    unrealized = sum(p["unrealized_pnl"] or 0 for p in positions)
+    positions_block = "\n\n".join(pos_rows)
 
-    prompt = f"""You are a trading analyst reviewing a paper trading account on Polymarket weather prediction markets.
+    # ── Prompt ─────────────────────────────────────────────────
+    prompt = f"""You are reviewing a live paper trading account on Polymarket weather prediction markets. Produce an **Intelligence Report** in clean markdown.
 
-PORTFOLIO SUMMARY:
-- Starting Capital: $2,000
-- Current Equity: ${equity:.2f}
-- Total Deployed: ${deployed:.2f}
-- Unrealized P&L: ${unrealized:+.2f}
-- Open Positions: {len(positions)}
+═══════════════════════════════════════
+ACCOUNT SNAPSHOT  ({now_utc.strftime('%Y-%m-%d %H:%M UTC')})
+═══════════════════════════════════════
+Starting Capital : $2,500
+Current Equity   : ${equity:,.2f}
+Total P&L        : {total_pnl:+.2f} ({total_pnl/STARTING_CAPITAL*100:+.2f}%)
+  Unrealized     : {unrealized:+.2f}
+  Realized       : {realized:+.2f}
+Deployed         : ${deployed:,.2f}  ({deployed/STARTING_CAPITAL*100:.0f}% of capital)
+Available        : ${STARTING_CAPITAL - deployed:,.2f}
+Open Positions   : {len(positions)}
+═══════════════════════════════════════
 
-OPEN POSITIONS:
-{chr(10).join(pos_lines)}
+POSITIONS (sorted by expiry, soonest first):
+{positions_block}
 
-Please provide a comprehensive Intelligence Report covering:
+═══════════════════════════════════════
+REPORT INSTRUCTIONS
+═══════════════════════════════════════
+Write exactly these sections in order. Use the markdown headers shown.
+Be specific — reference position numbers (#01, #02 …) when discussing individual trades.
 
-1. **Portfolio Overview** — Overall health, performance, and capital deployment
-2. **Position Analysis** — Which positions are winning/losing and why based on the rationale
-3. **Contradicting Trades** — Any positions that directly contradict each other (e.g., betting YES on Seattle rain AND NO on Seattle rain in overlapping windows, or positions that logically conflict)
-4. **Duplicate/Overlapping Trades** — Any positions covering the same event or very similar thresholds at the same location
-5. **Risk Assessment** — Concentration risks, correlated positions, any positions with outsized size vs edge
-6. **Key Insights & Recommendations** — What adjustments, if any, should be considered
+## 📊 Portfolio Overview
+2–3 sentences on overall health: equity trend, deployment level, P&L quality (is it driven by real edge or noise?).
 
-Write in clear professional prose. Be specific about which trade numbers conflict or overlap. Be concise but complete."""
+## 🏆 Top Performers & 📉 Worst Positions
+List the top 3 winning and bottom 3 losing positions by dollar P&L.
+For each: position number, question (shortened), P&L, and one sentence on why it's moving that way.
+
+## ⚠️ Contradicting Trades
+Identify any pairs where we hold opposing views that logically conflict — e.g. YES on "Seattle > 5in rain" AND NO on "Seattle > 3in rain" in the same month (if YES on >5in is true, NO on >3in is wrong).
+If none, write "None detected."
+
+## 🔁 Duplicate / Overlapping Exposure
+Identify groups of positions covering the same underlying event or location with adjacent thresholds — e.g. betting on temperature buckets 14°C, 15°C, 16°C, 17°C, 18°C in the same city/day.
+Explain what that means for combined risk.
+If none, write "None detected."
+
+## 🎯 Risk & Concentration
+- Which city / metric / event type is most over-represented?
+- Any positions expiring within 2 days that need attention?
+- Any position sized > $30 with a negative P&L trend?
+
+## 💡 Key Takeaways
+3–5 bullet points. Each starts with an action verb. Be direct and specific."""
 
     SYSTEM = (
-        "You are a quantitative trading analyst. Provide structured, insightful analysis "
-        "of prediction market positions. Be direct, specific, and actionable."
+        "You are a sharp quantitative trading analyst. "
+        "Output clean markdown only — no preamble, no 'here is your report', just the sections. "
+        "Be concise, specific, and ruthlessly actionable. Use numbers."
     )
 
     try:
