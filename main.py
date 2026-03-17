@@ -224,6 +224,18 @@ def _job_scan(clob_client) -> None:
                 max_age_minutes=settings.STALE_ORDER_MAX_AGE_MIN,
             )
 
+        # 5. Record scan completion time for dashboard countdown
+        try:
+            from db.init import get_connection
+            with get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO system_config (key, value) VALUES ('last_scan_at', datetime('now')) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+                )
+                conn.commit()
+        except Exception:  # noqa: BLE001
+            pass
+
     except Exception as exc:  # noqa: BLE001
         logger.error("main._job_scan: top-level failure: %s", exc)
         _send_alert(f"scan job failed: {exc}")

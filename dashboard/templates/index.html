@@ -174,6 +174,7 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
   <div class="header-logo">⛅ Weather<span>/</span>Bot</div>
   <span id="badge-mode" class="badge badge-paper">PAPER</span>
   <span id="badge-status" class="badge badge-running"><span class="dot"></span> RUNNING</span>
+  <span id="scan-countdown" style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono);padding:2px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);white-space:nowrap">scan —:——</span>
   <div class="header-spacer"></div>
   <div class="controls-bar">
     <span style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono)">Edge:</span>
@@ -299,6 +300,35 @@ let _mode   = 'paper';
 let _refreshTimer = null;
 const INTERVAL = 60000; // 60s
 
+// ── Scan countdown ──────────────────────────────────────────
+let _lastScanAt = null;      // ms since epoch (UTC)
+let _scanInterval = 300000;  // 5 min default
+let _countdownTimer = null;
+
+function tickCountdown(){
+  const el = document.getElementById('scan-countdown');
+  if(!el) return;
+  if(_lastScanAt == null){ el.textContent = 'scan —:——'; return; }
+  const nextScan = _lastScanAt + _scanInterval;
+  const remaining = Math.max(0, nextScan - Date.now());
+  const m = Math.floor(remaining/60000);
+  const s = Math.floor((remaining%60000)/1000);
+  const label = remaining===0 ? 'scanning…' : `scan ${m}:${String(s).padStart(2,'0')}`;
+  el.textContent = label;
+  el.style.color = remaining < 30000 ? 'var(--yellow)' : 'var(--muted)';
+}
+function startCountdown(lastScanIsoUtc, intervalSec){
+  if(lastScanIsoUtc){
+    // SQLite datetime('now') returns "YYYY-MM-DD HH:MM:SS" in UTC — add Z
+    const iso = lastScanIsoUtc.includes('T') ? lastScanIsoUtc : lastScanIsoUtc.replace(' ','T')+'Z';
+    _lastScanAt = new Date(iso).getTime();
+  }
+  _scanInterval = (intervalSec||300)*1000;
+  if(_countdownTimer) clearInterval(_countdownTimer);
+  _countdownTimer = setInterval(tickCountdown, 1000);
+  tickCountdown();
+}
+
 // ── Fetch helpers ──────────────────────────────────────────
 async function fetchJSON(url){
   const r = await fetch(url);
@@ -357,6 +387,8 @@ async function updateStatus(){
     if(edge && document.activeElement!==edge) edge.value = d.min_edge_threshold;
     const size = document.getElementById('ctrl-size');
     if(size && document.activeElement!==size) size.value = d.max_position_usdc;
+
+    startCountdown(d.last_scan_at, d.scan_interval_seconds);
   } catch(e){ console.warn('status error',e); }
 }
 

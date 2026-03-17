@@ -69,11 +69,18 @@ async def api_status():
             ).fetchone()
             size = float(size_row["value"]) if size_row else 50.0
 
+            scan_row = conn.execute(
+                "SELECT value FROM system_config WHERE key = 'last_scan_at'"
+            ).fetchone()
+            last_scan_at = scan_row["value"] if scan_row else None
+
         return {
             "halted": halted,
             "mode": mode,
             "min_edge_threshold": edge,
             "max_position_usdc": size,
+            "last_scan_at": last_scan_at,
+            "scan_interval_seconds": 300,
         }
     except Exception as e:
         return {"halted": False, "mode": "paper", "min_edge_threshold": 0.08, "max_position_usdc": 50.0, "error": str(e)}
