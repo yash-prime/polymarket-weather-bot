@@ -438,7 +438,7 @@ If none, write "None detected."
 
     try:
         if is_configured():
-            content = or_generate(prompt, system=SYSTEM)
+            content = or_generate(prompt, system=SYSTEM, max_tokens=4096, timeout=120)
         else:
             content = ollama_generate(prompt, system=SYSTEM)
     except Exception as exc:

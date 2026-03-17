@@ -105,6 +105,9 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
     lat = float(lat)
     lon = float(lon)
     threshold = float(threshold)
+    threshold_high = parsed.get("threshold_high")
+    if threshold_high is not None:
+        threshold_high = float(threshold_high)
 
     # Clamp forecast_date: if window_start is in the past use today;
     # if beyond 15 days (Open-Meteo max) cap at 15 days out.
@@ -119,8 +122,8 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
     except (ValueError, TypeError):
         window_start = str(_today)
 
-    # --- Cache lookup ---
-    cache_key = (round(lat, 2), round(lon, 2), metric, window_start)
+    # --- Cache lookup (include threshold + threshold_high to avoid cross-market cache hits) ---
+    cache_key = (round(lat, 2), round(lon, 2), metric, window_start, threshold, threshold_high)
     with _cache_lock:
         entry = _cache.get(cache_key)
         if entry is not None:
@@ -191,6 +194,7 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
         noaa_forecast=noaa_forecast,
         ecmwf_value=ecmwf_value,
         db_path=db_path,
+        threshold_high=threshold_high,
     )
 
     # --- Cache successful results (never cache None) ---

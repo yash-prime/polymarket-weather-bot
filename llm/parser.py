@@ -51,9 +51,10 @@ weather prediction questions and return ONLY valid JSON with these fields:
   "lat": float (decimal degrees, use known lat for the city/region),
   "lon": float (decimal degrees, use known lon for the city/region),
   "metric": one of ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "wind_speed_10m_max"],
-  "threshold": float (the numeric value in the question; for hurricane/storm questions use 0.0),
+  "threshold": float (the lower bound for 'between' questions, otherwise the single threshold; for hurricane/storm questions use 0.0),
+  "threshold_high": float or null (upper bound for 'between' questions, null for single-threshold questions),
   "unit": "fahrenheit" | "celsius" | "inches" | "mm" | "mph" | "kmh",
-  "operator": ">" | ">=" | "<" | "<=" | "==",
+  "operator": ">" | ">=" | "<" | "<=" | "==" | "between",
   "window_start": "YYYY-MM-DD",
   "window_end": "YYYY-MM-DD",
   "aggregation": "any" | "all" | "total",
@@ -61,6 +62,7 @@ weather prediction questions and return ONLY valid JSON with these fields:
   "market_type": "temperature" | "precipitation" | "wind" | "hurricane" | "storm" | "tornado" | "other",
   "parse_status": "success"
 }
+For 'between X and Y' or 'X to Y' range questions, set threshold=X (lower), threshold_high=Y (upper), and operator='between'.
 For hurricane/tropical storm/tornado questions: set market_type accordingly, use wind_speed_10m_max as
 metric, use the most relevant US coastal coordinates (Gulf Coast: 25.0,-90.0; Atlantic: 25.0,-75.0;
 Eastern Seaboard: 35.0,-75.0), and threshold=0.0.
@@ -69,6 +71,17 @@ Return only the JSON object, no explanation."""
 # Regex patterns for the most common question formats
 # Group names: city, threshold, unit, direction, month, day, year
 _PATTERNS = [
+    # "Will the highest temperature in Seattle be between 56-57°F on March 18?"
+    re.compile(
+        r"(?:highest|high|maximum|max|lowest|low|minimum|min)?\s*temperature.*?"
+        r"(?:be\s+)?between\s+(?P<threshold_low>\d+(?:\.\d+)?)\s*(?:and|-|\u2013|to)\s*(?P<threshold_high>\d+(?:\.\d+)?)\s*\u00b0?\s*(?P<unit>[FfCc])",
+        re.IGNORECASE,
+    ),
+    # "Will Seattle have between 3 and 4 inches of precipitation in March?"
+    re.compile(
+        r"(?P<city>[A-Za-z\s]+?)\s+have\s+between\s+(?P<threshold_low>\d+(?:\.\d+)?)\s+and\s+(?P<threshold_high>\d+(?:\.\d+)?)\s+inch",
+        re.IGNORECASE,
+    ),
     # "Will Chicago reach 90°F on June 15, 2026?"
     # "Will Miami exceed 95 degrees Fahrenheit on July 4?"
     re.compile(
@@ -315,6 +328,14 @@ def _validate_parsed(data: dict) -> None:
         raise ValueError(f"lat out of range: {data['lat']}")
     if not (-180 <= float(data["lon"]) <= 180):
         raise ValueError(f"lon out of range: {data['lon']}")
+    # Validate threshold_high for "between" operator
+    if data.get("operator") == "between":
+        if data.get("threshold_high") is None:
+            raise ValueError("operator='between' requires threshold_high")
+        if float(data["threshold_high"]) <= float(data["threshold"]):
+            raise ValueError(
+                f"threshold_high ({data['threshold_high']}) must be > threshold ({data['threshold']})"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -351,11 +372,26 @@ def _try_regex(question: str) -> dict[str, Any] | None:
             continue
 
         lat, lon = coords
-        threshold = float(groups.get("threshold", 0))
         unit_raw = groups.get("unit", "F").upper()
         direction = groups.get("direction", "exceed").lower()
 
-        metric, operator, unit = _infer_metric_operator(pattern, groups, direction, unit_raw)
+        # Check if this is a range/between match
+        threshold_low_str = groups.get("threshold_low")
+        threshold_high_str = groups.get("threshold_high")
+
+        if threshold_low_str is not None and threshold_high_str is not None:
+            # Range question: "between X and Y"
+            threshold = float(threshold_low_str)
+            threshold_high: float | None = float(threshold_high_str)
+            operator = "between"
+        else:
+            threshold = float(groups.get("threshold", 0))
+            threshold_high = None
+            operator = None  # will be inferred below
+
+        metric, inferred_operator, unit = _infer_metric_operator(pattern, groups, direction, unit_raw)
+        if operator is None:
+            operator = inferred_operator
 
         # Extract date from question (best-effort)
         window_start, window_end = _extract_dates(question)
@@ -374,6 +410,8 @@ def _try_regex(question: str) -> dict[str, Any] | None:
             "resolution_source": "unknown",
             "parse_status": "regex_fallback",
         }
+        if threshold_high is not None:
+            result["threshold_high"] = threshold_high
         return result
 
     return None

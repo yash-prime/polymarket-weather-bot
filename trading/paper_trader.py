@@ -54,6 +54,70 @@ def place_limit_order(
     return order_id
 
 
+def close_position(
+    market_id: str,
+    reason: str = "",
+    db_path: str | None = None,
+) -> bool:
+    """
+    Close an open paper position early (sell before resolution).
+
+    Computes realized P&L based on current market price, marks the position
+    as closed, and records the trade as closed with realized P&L.
+
+    Returns True if a position was found and closed, False otherwise.
+    """
+    try:
+        from db.init import get_connection
+
+        with get_connection(db_path) as conn:
+            pos = conn.execute(
+                "SELECT p.market_id, p.direction, p.size, p.entry_price, m.yes_price "
+                "FROM paper_positions p LEFT JOIN markets m ON m.id = p.market_id "
+                "WHERE p.market_id = ? AND p.size > 0",
+                (market_id,),
+            ).fetchone()
+
+            if pos is None:
+                logger.debug("paper_trader.close_position: no open position for %s", market_id[:16])
+                return False
+
+            size = float(pos["size"])
+            entry = float(pos["entry_price"])
+            yes_price = float(pos["yes_price"]) if pos["yes_price"] is not None else entry
+            direction = pos["direction"]
+
+            # P&L for early close (selling at current market price)
+            if direction == "YES":
+                realized = size * (yes_price / entry - 1) if entry > 0 else 0.0
+            else:
+                no_entry = 1.0 - entry
+                no_current = 1.0 - yes_price
+                realized = size * (no_current / no_entry - 1) if no_entry > 0 else 0.0
+
+            conn.execute(
+                "UPDATE paper_positions SET size=0, unrealized_pnl=0, status='closed' "
+                "WHERE market_id=?",
+                (market_id,),
+            )
+            conn.execute(
+                "UPDATE paper_trades SET status='closed', closed_at=datetime('now'), realized_pnl=? "
+                "WHERE market_id=? AND status='open'",
+                (realized, market_id),
+            )
+            conn.commit()
+
+        logger.info(
+            "paper_trader.close_position: CLOSED %s %s size=%.2f realized=%.2f reason=%s",
+            direction, market_id[:16], size, realized, reason or "none",
+        )
+        return True
+
+    except Exception as exc:  # noqa: BLE001
+        logger.error("paper_trader.close_position: DB error: %s", exc)
+        return False
+
+
 def cancel_order(
     order_id: str,
     db_path: str | None = None,

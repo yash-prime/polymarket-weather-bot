@@ -148,14 +148,53 @@ def _job_llm_parse() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _load_open_positions(mode: str) -> list[dict]:
+    """Load open positions with market metadata for LLM portfolio manager."""
+    positions_table = "positions" if mode == "live" else "paper_positions"
+    try:
+        from db.init import get_connection
+        with get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT p.market_id, p.direction, p.size, p.entry_price,
+                       p.unrealized_pnl, m.question, m.yes_price, m.end_date, m.parsed
+                FROM {positions_table} p
+                JOIN markets m ON m.id = p.market_id
+                WHERE p.size > 0
+                """,  # noqa: S608
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("main._load_open_positions: DB read failed: %s", exc)
+        return []
+
+
+def _load_portfolio_snap(mode: str) -> dict | None:
+    """Load most recent portfolio snapshot for LLM context."""
+    try:
+        from db.init import get_connection
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM portfolio_snapshots WHERE mode=? ORDER BY snapshot_at DESC LIMIT 1",
+                (mode,),
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("main._load_portfolio_snap: %s", exc)
+        return None
+
+
 def _job_scan(clob_client) -> None:
     """
-    Main scan cycle:
+    Main scan cycle — LLM-driven portfolio management:
       1. Kill-switch check
       2. Fetch markets from Gamma (writes pending to DB)
-      3. Score active (parse_status=success) markets through weather engine
-      4. Generate signal → risk approve → place order (paper or live)
-      5. Cancel stale orders
+      3. Score all active markets through weather engine + collect signals
+      4. Load current portfolio
+      5. Ask LLM: open / close / hold (with risk guardrails as safety net)
+      6. Execute LLM actions
+      7. Update prices + settle resolved positions
+      8. Record scan time
     """
     if _is_halted():
         logger.info("main._job_scan: kill switch is active — skipping cycle")
@@ -167,16 +206,19 @@ def _job_scan(clob_client) -> None:
         from engine.weather import compute as weather_compute
         from market.scanner import get_active_markets, job_fetch_markets
         from market.signal import compute_signal
+        from trading.llm_manager import analyze_and_decide
+        from trading.portfolio_analyzer import build_portfolio_context
         from trading.risk import approve
 
         # 1. Fetch new markets from Gamma (writes parse_status='pending' to DB)
         new_count = job_fetch_markets()
         logger.info("main._job_scan: fetched %d new markets from Gamma", new_count)
 
-        # 2. Process active (parsed) markets
+        # 2. Score all active markets — collect signals without trading yet
         markets = get_active_markets()
         logger.info("main._job_scan: %d active markets to score", len(markets))
 
+        new_signals: list[dict] = []
         for market in markets:
             try:
                 model_result = weather_compute(market)
@@ -185,47 +227,105 @@ def _job_scan(clob_client) -> None:
 
                 signal = compute_signal(market, model_result)
                 if signal is None:
-                    # No tradeable edge but we still have a model result — persist
-                    # a minimal signal row so the dashboard shows model probabilities
                     _persist_weak_signal(market, model_result)
                     continue
 
-                approved = approve(signal, mode)
-                if approved is None:
+                new_signals.append({
+                    "market_id": market.id,
+                    "direction": signal.direction,
+                    "edge": signal.adjusted_edge,
+                    "model_prob": signal.model_prob,
+                    "market_price": signal.market_price,
+                    "kelly_size": signal.raw_kelly_size,
+                    "question": market.question,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.error("main._job_scan: error scoring market %s: %s", market.id, exc)
+
+        logger.info("main._job_scan: %d tradeable signals collected", len(new_signals))
+
+        # 3. Load current portfolio state
+        open_positions = _load_open_positions(mode)
+        snap = _load_portfolio_snap(mode)
+        portfolio_summary = build_portfolio_context(open_positions, snap)
+
+        # 4. Ask LLM what to do (open / close / hold)
+        actions = analyze_and_decide(open_positions, new_signals, portfolio_summary, mode)
+
+        # 5. Execute LLM actions with risk guardrails as safety net
+        if mode == "paper":
+            from trading.paper_trader import (
+                close_position as paper_close,
+                place_limit_order as paper_place,
+            )
+        else:
+            from trading.trader import place_limit_order as live_place  # type: ignore[import]
+
+        for action in actions:
+            act = action.get("action", "")
+            market_id = action.get("market_id", "")
+
+            if act == "close":
+                if mode == "paper":
+                    paper_close(market_id, reason=action.get("reason", ""))
+                else:
+                    logger.info("main._job_scan: live close not implemented — skipping %s", market_id[:16])
+
+            elif act == "open":
+                # Find the original signal to build a proper Signal object for risk.approve()
+                sig_data = next((s for s in new_signals if s["market_id"] == market_id), None)
+                if sig_data is None:
                     continue
 
-                # Build human-readable trade rationale
-                rationale = (
-                    f"{signal.direction} | model={signal.model_prob:.1%} "
-                    f"market={signal.market_price:.1%} "
-                    f"edge={signal.adjusted_edge:+.1%} "
-                    f"size=${approved.final_size:.0f} USDC"
+                from market.models import Signal
+                sig = Signal(
+                    market_id=market_id,
+                    direction=action.get("direction", sig_data["direction"]),
+                    raw_kelly_size=float(sig_data["kelly_size"]),
+                    adjusted_edge=float(sig_data["edge"]),
+                    model_prob=float(sig_data["model_prob"]),
+                    market_price=float(sig_data["market_price"]),
                 )
 
-                # Place order
-                if mode == "live":
-                    from trading.trader import place_limit_order
-                    place_limit_order(
-                        clob_client,
-                        approved.signal.market_id,
-                        approved.signal.direction,
-                        approved.final_size,
-                        approved.signal.market_price,
-                    )
-                else:
-                    from trading.paper_trader import place_limit_order as paper_place
-                    paper_place(
-                        approved.signal.market_id,
-                        approved.signal.direction,
-                        approved.final_size,
-                        approved.signal.market_price,
-                        rationale,
-                    )
+                # Safety net: still run through risk guardrails
+                approved = approve(sig, mode)
+                if approved is None:
+                    logger.debug("main._job_scan: risk rejected LLM open for %s", market_id[:16])
+                    continue
 
-            except Exception as exc:  # noqa: BLE001
-                logger.error("main._job_scan: error processing market %s: %s", market.id, exc)
+                # Override size with LLM recommendation if smaller (more conservative)
+                final_size = min(float(action.get("size", approved.final_size)), approved.final_size)
+                if final_size <= 0:
+                    continue
 
-        # 3. Update paper position prices + settle resolved markets
+                rationale = (
+                    f"{sig.direction} | model={sig.model_prob:.1%} "
+                    f"market={sig.market_price:.1%} "
+                    f"edge={sig.adjusted_edge:+.1%} "
+                    f"size=${final_size:.0f} USDC"
+                )
+
+                try:
+                    if mode == "live":
+                        live_place(
+                            clob_client,
+                            market_id,
+                            sig.direction,
+                            final_size,
+                            sig.market_price,
+                        )
+                    else:
+                        paper_place(
+                            market_id,
+                            sig.direction,
+                            final_size,
+                            sig.market_price,
+                            rationale,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("main._job_scan: error placing order for %s: %s", market_id[:16], exc)
+
+        # 6. Update paper position prices + settle resolved markets
         if mode == "paper":
             from trading.paper_trader import settle_resolved_positions, update_position_prices
             update_position_prices()
@@ -233,7 +333,7 @@ def _job_scan(clob_client) -> None:
             if settled:
                 logger.info("main._job_scan: settled %d resolved paper positions", settled)
 
-        # 4. Cancel stale orders (live only)
+        # 7. Cancel stale orders (live only)
         if mode == "live" and clob_client is not None:
             from trading.trader import cancel_stale_orders
             cancel_stale_orders(
@@ -241,7 +341,7 @@ def _job_scan(clob_client) -> None:
                 max_age_minutes=settings.STALE_ORDER_MAX_AGE_MIN,
             )
 
-        # 5. Record scan completion time for dashboard countdown
+        # 8. Record scan completion time for dashboard countdown
         try:
             from db.init import get_connection
             with get_connection() as conn:

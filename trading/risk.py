@@ -85,6 +85,15 @@ def approve(
         )
         return None
 
+    # --- 4b. Event group limit — max 2 positions per city+date+metric partition ---
+    group_count = _count_event_group_positions(signal.market_id, positions_table, db_path)
+    if group_count >= 2:
+        logger.info(
+            "risk.approve: event group already has %d positions — rejecting %s",
+            group_count, signal.market_id,
+        )
+        return None
+
     # --- 5. Size computation ---
     bankroll = _get_bankroll(mode, db_path)
     raw_size = bankroll * signal.raw_kelly_size
@@ -193,6 +202,95 @@ def _get_daily_loss_pct(mode: str, db_path: str | None) -> float:
     except Exception as exc:  # noqa: BLE001
         logger.warning("risk._get_daily_loss_pct: DB read failed: %s — returning 0.0", exc)
         return 0.0
+
+
+def _count_event_group_positions(market_id: str, table: str, db_path: str | None) -> int:
+    """
+    Count open positions in the same event group (city + date + metric).
+
+    Two markets are in the same group when their parsed JSON shares the same
+    city, window_start, and metric type. Returns 0 on any error (safe default).
+    """
+    try:
+        import json
+        from db.init import get_connection
+
+        with get_connection(db_path) as conn:
+            # Get the parsed data for the incoming signal's market
+            row = conn.execute(
+                "SELECT parsed FROM markets WHERE id = ?", (market_id,)
+            ).fetchone()
+
+        if not row or not row["parsed"]:
+            return 0
+
+        try:
+            parsed = json.loads(row["parsed"])
+        except (json.JSONDecodeError, ValueError):
+            import ast
+            try:
+                parsed = ast.literal_eval(row["parsed"])
+            except Exception:
+                return 0
+
+        if not isinstance(parsed, dict):
+            return 0
+
+        city = str(parsed.get("city", "")).lower().strip()
+        window_start = str(parsed.get("window_start", "")).strip()
+        metric = str(parsed.get("metric", "")).strip()
+
+        if not city or not window_start or not metric:
+            return 0
+
+        # Normalize metric to base type
+        if "temperature" in metric:
+            metric_base = "temperature"
+        elif "precip" in metric or "rain" in metric:
+            metric_base = "precipitation"
+        elif "wind" in metric:
+            metric_base = "wind"
+        else:
+            metric_base = metric
+
+        # Count open positions in the same group using parsed JSON comparison
+        with get_connection(db_path) as conn:
+            open_positions = conn.execute(
+                f"""
+                SELECT p.market_id, m.parsed
+                FROM {table} p
+                JOIN markets m ON m.id = p.market_id
+                WHERE p.size > 0 AND p.market_id != ?
+                """,  # noqa: S608
+                (market_id,),
+            ).fetchall()
+
+        count = 0
+        for pos in open_positions:
+            try:
+                pos_parsed = json.loads(pos["parsed"] or "{}")
+                pos_city = str(pos_parsed.get("city", "")).lower().strip()
+                pos_window = str(pos_parsed.get("window_start", "")).strip()
+                pos_metric = str(pos_parsed.get("metric", "")).strip()
+                if "temperature" in pos_metric:
+                    pos_metric_base = "temperature"
+                elif "precip" in pos_metric or "rain" in pos_metric:
+                    pos_metric_base = "precipitation"
+                elif "wind" in pos_metric:
+                    pos_metric_base = "wind"
+                else:
+                    pos_metric_base = pos_metric
+
+                if pos_city == city and pos_window == window_start and pos_metric_base == metric_base:
+                    count += 1
+            except Exception:  # noqa: BLE001
+                continue
+
+        return count
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("risk._count_event_group_positions: failed: %s — assuming 0", exc)
+        return 0
 
 
 def _get_deployed_capital(table: str, db_path: str | None) -> float:

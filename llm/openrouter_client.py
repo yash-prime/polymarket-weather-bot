@@ -32,7 +32,12 @@ def is_configured() -> bool:
     return bool(settings.OPENROUTER_API_KEY)
 
 
-def generate(prompt: str, system: str | None = None) -> str:
+def generate(
+    prompt: str,
+    system: str | None = None,
+    max_tokens: int | None = None,
+    timeout: int = 30,
+) -> str:
     """
     Send a prompt to OpenRouter and return the response text.
 
@@ -40,6 +45,8 @@ def generate(prompt: str, system: str | None = None) -> str:
     ----------
     prompt : User message.
     system : Optional system prompt.
+    max_tokens : Optional maximum number of tokens for the response.
+    timeout : Request timeout in seconds (default 30).
 
     Returns
     -------
@@ -72,8 +79,10 @@ def generate(prompt: str, system: str | None = None) -> str:
         "model": settings.OPENROUTER_MODEL,
         "messages": messages,
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
 
-    resp = requests.post(_CHAT_URL, json=payload, headers=headers, timeout=30)
+    resp = requests.post(_CHAT_URL, json=payload, headers=headers, timeout=timeout)
     resp.raise_for_status()
 
     data = resp.json()

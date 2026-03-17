@@ -39,6 +39,7 @@ def compute_probability(
     noaa_forecast: dict | None = None,
     ecmwf_value: float | None = None,
     db_path: str | None = None,
+    threshold_high: float | None = None,
 ) -> ModelResult | None:
     """
     Aggregate multi-source ensemble into a single ModelResult.
@@ -47,8 +48,9 @@ def compute_probability(
     ----------
     lat, lon        : Location
     metric          : Canonical metric name (e.g. 'temperature_2m_max')
-    threshold       : Numeric threshold for the event (e.g. 90.0)
-    operator        : Comparison operator: ">" | ">=" | "<" | "<=" | "=="
+    threshold       : Numeric threshold (lower bound for 'between' questions)
+    threshold_high  : Upper bound for 'between' range questions (None for single-threshold)
+    operator        : Comparison operator: ">" | ">=" | "<" | "<=" | "==" | "between"
     forecast_date   : Target date (YYYY-MM-DD)
     open_meteo_ensemble : Raw response from open_meteo.get_ensemble()
     noaa_forecast   : Raw response from noaa.get_forecast()
@@ -71,7 +73,7 @@ def compute_probability(
     if open_meteo_ensemble is not None:
         members = _extract_open_meteo_members(open_meteo_ensemble, metric, forecast_date)
         if members:
-            probs = _members_to_probs(members, threshold, operator)
+            probs = _members_to_probs(members, threshold, operator, threshold_high)
             w = weights.get("open_meteo", 1.0)
             member_probs.extend([p * w for p in probs])
             sources_used.append("open_meteo_ensemble")
@@ -83,7 +85,7 @@ def compute_probability(
 
     # --- NOAA single-model (treated as 1 member) ---
     if noaa_forecast is not None:
-        noaa_prob = _extract_noaa_prob(noaa_forecast, metric, threshold, operator, forecast_date)
+        noaa_prob = _extract_noaa_prob(noaa_forecast, metric, threshold, operator, forecast_date, threshold_high)
         if noaa_prob is not None:
             w = weights.get("noaa", 1.0)
             member_probs.append(noaa_prob * w)
@@ -95,7 +97,7 @@ def compute_probability(
 
     # --- ECMWF snapshot (single value → deterministic, treat as 1 member) ---
     if ecmwf_value is not None:
-        ecmwf_prob = 1.0 if _compare(ecmwf_value, threshold, operator) else 0.0
+        ecmwf_prob = 1.0 if _compare(ecmwf_value, threshold, operator, threshold_high) else 0.0
         w = weights.get("ecmwf", 1.0)
         member_probs.append(ecmwf_prob * w)
         sources_used.append("ecmwf")
@@ -143,16 +145,18 @@ def compute_probability(
     )
 
 
-def _compare(value: float, threshold: float, operator: str) -> bool:
+def _compare(value: float, threshold: float, operator: str, threshold_high: float | None = None) -> bool:
+    if operator == "between" and threshold_high is not None:
+        return threshold <= value <= threshold_high
     ops = {">": value > threshold, ">=": value >= threshold,
            "<": value < threshold, "<=": value <= threshold,
            "==": value == threshold}
     return ops.get(operator, False)
 
 
-def _members_to_probs(members: list[float], threshold: float, operator: str) -> list[float]:
+def _members_to_probs(members: list[float], threshold: float, operator: str, threshold_high: float | None = None) -> list[float]:
     """Convert a list of raw member values to binary outcomes (0.0 or 1.0)."""
-    return [1.0 if _compare(v, threshold, operator) else 0.0 for v in members]
+    return [1.0 if _compare(v, threshold, operator, threshold_high) else 0.0 for v in members]
 
 
 def _extract_open_meteo_members(
@@ -217,7 +221,8 @@ def _extract_open_meteo_members(
 
 
 def _extract_noaa_prob(
-    data: dict, metric: str, threshold: float, operator: str, forecast_date: str
+    data: dict, metric: str, threshold: float, operator: str, forecast_date: str,
+    threshold_high: float | None = None,
 ) -> float | None:
     """
     Extract a single probability estimate from NOAA NWS forecast.
@@ -243,7 +248,7 @@ def _extract_noaa_prob(
             # Convert to F for consistency with most US Polymarket questions
             temp = temp * 9 / 5 + 32
 
-        return 1.0 if _compare(float(temp), threshold, operator) else 0.0
+        return 1.0 if _compare(float(temp), threshold, operator, threshold_high) else 0.0
 
     return None
 

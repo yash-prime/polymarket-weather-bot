@@ -237,7 +237,7 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
         <button id="btn-intel" onclick="generateReport()" style="margin-left:auto;font-family:var(--font-mono);font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);border:1px solid var(--purple);background:rgba(188,140,255,.1);color:var(--purple);cursor:pointer;letter-spacing:.04em;text-transform:uppercase">INTEL</button>
       </div>
       <div class="card-body" style="padding:8px">
-        <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:8px;max-height:500px;overflow-y:auto">
+        <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:8px;max-height:800px;overflow-y:auto">
           <div style="color:var(--muted);font-size:.8rem;padding:4px">No reports yet — click INTEL to generate.</div>
         </div>
       </div>
@@ -660,14 +660,29 @@ async function loadReports(){
     }
     list.innerHTML = d.reports.map((r,i) => `
       <div style="background:var(--bg2);border:1px solid ${i===0?'var(--purple)':'var(--border2)'};border-radius:var(--radius);overflow:hidden">
-        <div style="padding:7px 12px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--muted);font-family:var(--font-mono);background:${i===0?'rgba(188,140,255,.06)':'transparent'}">
+        <div class="intel-report-header" data-collapsible="${i>0?'true':'false'}"
+             style="padding:7px 12px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--muted);font-family:var(--font-mono);${i===0?'background:rgba(188,140,255,.06)':'cursor:pointer;user-select:none'}">
           <span style="color:var(--purple);font-weight:700">REPORT #${r.id}</span>
           <span>${r.generated_at.replace('T',' ').slice(0,16)} UTC</span>
-          ${i===0?'<span style="background:rgba(188,140,255,.18);color:var(--purple);padding:1px 7px;border-radius:10px;font-size:.66rem;font-weight:600;letter-spacing:.05em">LATEST</span>':''}
+          ${i===0?'<span style="background:rgba(188,140,255,.18);color:var(--purple);padding:1px 7px;border-radius:10px;font-size:.66rem;font-weight:600;letter-spacing:.05em">LATEST</span>':'<span class="intel-toggle-hint" style="color:var(--muted);font-size:.8rem">&#9656; click to expand</span>'}
         </div>
-        <div style="padding:14px 16px;font-size:.8rem;line-height:1.7;color:var(--text);max-height:520px;overflow-y:auto">${mdToHtml(r.content)}</div>
+        <div class="intel-report-body" style="padding:14px 16px;font-size:.8rem;line-height:1.7;color:var(--text);${i>0?'display:none':'display:block'}">${mdToHtml(r.content)}</div>
       </div>
     `).join('');
+    // Attach collapse/expand handlers via event delegation
+    list.querySelectorAll('.intel-report-header[data-collapsible="true"]').forEach(hdr => {
+      hdr.addEventListener('click', function(){
+        const body = this.nextElementSibling;
+        const hint = this.querySelector('.intel-toggle-hint');
+        if(body.style.display === 'none'){
+          body.style.display = 'block';
+          if(hint) hint.innerHTML = '&#9662; click to collapse';
+        } else {
+          body.style.display = 'none';
+          if(hint) hint.innerHTML = '&#9656; click to expand';
+        }
+      });
+    });
   } catch(e){ console.warn('intel load error',e); }
 }
 
