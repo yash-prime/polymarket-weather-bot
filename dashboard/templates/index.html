@@ -80,8 +80,8 @@ thead tr{border-bottom:1px solid var(--border)}
 th{padding:6px 10px;text-align:left;color:var(--muted);font-weight:500;white-space:nowrap;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
 th.num{text-align:right}
 tbody tr{border-bottom:1px solid var(--border2);transition:background 100ms}
-tbody.group-rows tr:nth-child(even){background:rgba(255,255,255,0.02)}
-tbody.group-rows tr:hover{background:var(--bg2)}
+tbody tr[data-group]:nth-child(even){background:rgba(255,255,255,0.02)}
+tbody tr[data-group]:hover{background:var(--bg2)}
 td{padding:10px 10px;vertical-align:middle;max-width:300px}
 .td-q{font-family:var(--font-ui);font-size:.8rem;color:var(--text);white-space:normal;line-height:1.35}
 .td-q small{display:block;color:var(--muted);font-size:.72rem;margin-top:2px}
@@ -499,7 +499,7 @@ function renderMarkets(markets){
     const groupId = 'g-' + dk.replace(/[^a-z0-9]/gi,'-');
 
     html += `
-    <tr class="market-group-header" onclick="toggleGroup('${groupId}',this)">
+    <tr class="market-group-header" data-group-header="${groupId}" onclick="toggleGroup('${groupId}',this)" style="${collapsed?'':''}">
       <td colspan="8">
         <span class="group-arrow" style="transform:${collapsed?'':'rotate(90deg)'}">▶</span>
         ${label}
@@ -508,7 +508,6 @@ function renderMarkets(markets){
         ${openPart?`<span style="color:var(--blue)">${openPart}</span>`:''}
       </td>
     </tr>
-    <tbody id="${groupId}" style="${collapsed?'display:none':''}">
     ${gMarkets.map(m => {
       const yesPrice = pct(m.yes_price);
       const noPrice = m.no_price!=null ? pct(m.no_price) : '—';
@@ -521,7 +520,7 @@ function renderMarkets(markets){
       const trClass = m.open_direction ? `has-trade${m.open_direction==='NO'?' dir-no':''}` : '';
       const tradeBadge = m.open_direction ? `<span class="trade-badge trade-badge-${m.open_direction.toLowerCase()}">${m.open_direction}</span>` : '';
       const statusInline = m.parse_status && m.parse_status!=='success' ? statusChip(m.parse_status) : '';
-      return `<tr class="${trClass}">
+      return `<tr class="${trClass}" data-group="${groupId}"${collapsed?' style="display:none"':''}>
         <td class="td-q">${esc(m.question)}${tradeBadge}${statusInline}${city}${startLabel}</td>
         <td class="num">${yesPrice}</td>
         <td class="num muted">${noPrice}</td>
@@ -531,24 +530,19 @@ function renderMarkets(markets){
         <td>${weather}</td>
         <td class="num muted">${vol(m.volume)}</td>
       </tr>`;
-    }).join('')}
-    </tbody>`;
+    }).join('')}`;
   });
 
   tbody.innerHTML = html;
 }
 
 function toggleGroup(id, headerRow){
-  const el = document.getElementById(id);
-  if(!el) return;
+  const rows = document.querySelectorAll(`tr[data-group="${id}"]`);
+  if(!rows.length) return;
   const arrow = headerRow.querySelector('.group-arrow');
-  if(el.style.display==='none'){
-    el.style.display='';
-    if(arrow) arrow.style.transform='rotate(90deg)';
-  } else {
-    el.style.display='none';
-    if(arrow) arrow.style.transform='';
-  }
+  const collapsed = rows[0].style.display === 'none';
+  rows.forEach(r => r.style.display = collapsed ? '' : 'none');
+  if(arrow) arrow.style.transform = collapsed ? 'rotate(90deg)' : '';
 }
 
 // ── Update Trades ───────────────────────────────────────────
