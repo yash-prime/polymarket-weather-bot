@@ -28,6 +28,8 @@ python-dotenv==1.0.1
 
 # --- HTTP ---
 requests==2.31.0
+httpx==0.27.0
+aiohttp==3.9.3
 
 # --- Data science ---
 pandas==2.1.0
