@@ -118,7 +118,7 @@ td{padding:7px 10px;vertical-align:middle;max-width:300px}
 .bar-val{font-family:var(--font-mono);font-size:.75rem;color:var(--muted);text-align:right}
 
 /* ── Portfolio stat grid ─────────────────────────────────── */
-.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .stat-box{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);padding:10px 12px}
 .stat-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px}
 .stat-val{font-family:var(--font-mono);font-size:1.1rem;font-weight:600}
@@ -150,7 +150,7 @@ td{padding:7px 10px;vertical-align:middle;max-width:300px}
 @media(max-width:900px){
   .main{grid-template-columns:1fr}
   .col-right{order:-1}
-  .stat-grid{grid-template-columns:repeat(4,1fr)}
+  .stat-grid{grid-template-columns:repeat(6,1fr)}
 }
 @media(max-width:500px){
   .stat-grid{grid-template-columns:1fr 1fr}
@@ -424,20 +424,28 @@ async function updatePortfolio(){
 
     document.getElementById('portfolio-stats').innerHTML = `
       <div class="stat-box">
+        <div class="stat-label">Balance</div>
+        <div class="stat-val blue">${s.total_equity!=null ? usd(s.total_equity) : '—'}</div>
+      </div>
+      <div class="stat-box">
         <div class="stat-label">Total P&amp;L</div>
-        <div class="stat-val ${pnlColor}">${usd(pnl)}</div>
+        <div class="stat-val ${pnlColor}">${pnl!=null?(pnl>=0?'+':'')+usd(pnl):'—'}</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Positions</div>
         <div class="stat-val blue">${d.positions?.length ?? '—'}</div>
       </div>
       <div class="stat-box">
-        <div class="stat-label">Day Loss</div>
-        <div class="stat-val ${s.daily_loss_pct!=null&&s.daily_loss_pct<0?'red':'muted'}">${s.daily_loss_pct!=null?(s.daily_loss_pct*100).toFixed(2)+'%':'—'}</div>
+        <div class="stat-label">Unrealized</div>
+        <div class="stat-val ${s.unrealized_pnl!=null&&s.unrealized_pnl>=0?'green':'red'}">${usd(s.unrealized_pnl)}</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Realized</div>
         <div class="stat-val muted">${usd(s.realized_pnl)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Day Loss</div>
+        <div class="stat-val ${s.daily_loss_pct!=null&&s.daily_loss_pct>0.05?'red':'muted'}">${s.daily_loss_pct!=null?(s.daily_loss_pct*100).toFixed(2)+'%':'—'}</div>
       </div>`;
 
     const posEl = document.getElementById('positions-list');
