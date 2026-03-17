@@ -20,7 +20,7 @@ from pathlib import Path
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 app = FastAPI(title="Polymarket Weather Bot Dashboard")
@@ -286,6 +286,109 @@ async def api_logs():
         return {"lines": lines[-100:]}
     except Exception as e:
         return {"lines": [f"Error reading log: {e}"]}
+
+
+# ── API: Intelligence Reports ─────────────────────────────────────────────────
+
+@app.get("/api/intelligence-reports")
+def api_get_reports():
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, generated_at, content FROM intelligence_reports ORDER BY generated_at DESC"
+        ).fetchall()
+    return {"reports": [dict(r) for r in rows]}
+
+
+@app.post("/api/intelligence-report")
+def api_generate_report():
+    from llm.openrouter_client import generate as or_generate, is_configured
+    from llm.ollama_client import generate as ollama_generate
+
+    with _db() as conn:
+        positions = conn.execute("""
+            SELECT p.market_id, p.direction, p.size, p.entry_price,
+                   p.current_price, p.unrealized_pnl,
+                   m.question, m.yes_price, m.end_date, m.volume,
+                   (SELECT rationale FROM paper_trades
+                    WHERE market_id = p.market_id
+                    ORDER BY created_at DESC LIMIT 1) as rationale
+            FROM paper_positions p
+            JOIN markets m ON m.id = p.market_id
+            WHERE p.size > 0 AND p.status = 'open'
+            ORDER BY p.unrealized_pnl DESC
+        """).fetchall()
+
+        snap = conn.execute(
+            "SELECT * FROM portfolio_snapshots ORDER BY snapshot_at DESC LIMIT 1"
+        ).fetchone()
+
+    if not positions:
+        raise HTTPException(status_code=400, detail="No open positions")
+
+    # Build position list text
+    pos_lines = []
+    for i, p in enumerate(positions, 1):
+        pnl = p["unrealized_pnl"] or 0
+        pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+        rationale = p["rationale"] or "no rationale stored"
+        pos_lines.append(
+            f"{i}. [{p['direction']}] {p['question']}\n"
+            f"   Size: ${p['size']:.2f} | Entry: {p['entry_price']:.3f} | "
+            f"Current YES: {p['yes_price']:.3f} | P&L: {pnl_str}\n"
+            f"   Ends: {p['end_date']} | Rationale: {rationale}"
+        )
+
+    equity = snap["total_equity"] if snap else 2000.0
+    deployed = sum(p["size"] for p in positions)
+    unrealized = sum(p["unrealized_pnl"] or 0 for p in positions)
+
+    prompt = f"""You are a trading analyst reviewing a paper trading account on Polymarket weather prediction markets.
+
+PORTFOLIO SUMMARY:
+- Starting Capital: $2,000
+- Current Equity: ${equity:.2f}
+- Total Deployed: ${deployed:.2f}
+- Unrealized P&L: ${unrealized:+.2f}
+- Open Positions: {len(positions)}
+
+OPEN POSITIONS:
+{chr(10).join(pos_lines)}
+
+Please provide a comprehensive Intelligence Report covering:
+
+1. **Portfolio Overview** — Overall health, performance, and capital deployment
+2. **Position Analysis** — Which positions are winning/losing and why based on the rationale
+3. **Contradicting Trades** — Any positions that directly contradict each other (e.g., betting YES on Seattle rain AND NO on Seattle rain in overlapping windows, or positions that logically conflict)
+4. **Duplicate/Overlapping Trades** — Any positions covering the same event or very similar thresholds at the same location
+5. **Risk Assessment** — Concentration risks, correlated positions, any positions with outsized size vs edge
+6. **Key Insights & Recommendations** — What adjustments, if any, should be considered
+
+Write in clear professional prose. Be specific about which trade numbers conflict or overlap. Be concise but complete."""
+
+    SYSTEM = (
+        "You are a quantitative trading analyst. Provide structured, insightful analysis "
+        "of prediction market positions. Be direct, specific, and actionable."
+    )
+
+    try:
+        if is_configured():
+            content = or_generate(prompt, system=SYSTEM)
+        else:
+            content = ollama_generate(prompt, system=SYSTEM)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"LLM error: {exc}")
+
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO intelligence_reports (content) VALUES (?)",
+            (content,)
+        )
+        conn.commit()
+        report = conn.execute(
+            "SELECT id, generated_at, content FROM intelligence_reports ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    return {"id": report["id"], "generated_at": report["generated_at"], "content": report["content"]}
 
 
 # ── API: Control ──────────────────────────────────────────────────────────────

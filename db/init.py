@@ -22,7 +22,7 @@ _SCHEMA_DIR = Path(__file__).parent
 _SCHEMA_FILE = _SCHEMA_DIR / "schema.sql"
 
 # Increment this whenever schema.sql changes incompatibly.
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def _get_db_path() -> str:
@@ -90,6 +90,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         2: _migrate_v2,
         3: _migrate_v3,
         4: _migrate_v4,
+        5: _migrate_v5,
     }
 
     for version in sorted(migrations.keys()):
@@ -127,6 +128,17 @@ def _migrate_v4(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE paper_trades ADD COLUMN realized_pnl REAL")
     except sqlite3.OperationalError:
         pass  # column already exists
+
+
+def _migrate_v5(conn: sqlite3.Connection) -> None:
+    """v5: add intelligence_reports table for LLM portfolio analysis."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS intelligence_reports (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            content     TEXT NOT NULL
+        )
+    """)
 
 
 def get(table: str, key: str, db_path: str | None = None) -> str | None:

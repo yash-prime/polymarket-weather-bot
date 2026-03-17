@@ -175,6 +175,7 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
   <span id="badge-mode" class="badge badge-paper">PAPER</span>
   <span id="badge-status" class="badge badge-running"><span class="dot"></span> RUNNING</span>
   <span id="scan-countdown" style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono);padding:2px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);white-space:nowrap">scan —:——</span>
+  <button id="btn-intel" onclick="generateReport()" style="font-family:var(--font-mono);font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);border:1px solid var(--purple);background:rgba(188,140,255,.1);color:var(--purple);cursor:pointer;transition:all 150ms;letter-spacing:.04em;text-transform:uppercase" title="Generate Intelligence Report">INTEL</button>
   <div class="header-spacer"></div>
   <div class="controls-bar">
     <span style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono)">Edge:</span>
@@ -291,6 +292,20 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
 
   </div>
 </div><!-- /main -->
+
+<!-- ── Intelligence Report Panel ──────────────────────────── -->
+<div id="intel-panel" style="display:none;border-top:1px solid var(--border);background:var(--bg1)">
+  <div style="max-width:1600px;margin:0 auto;padding:12px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Intelligence Reports
+      <span id="intel-count" style="font-size:.7rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--purple)">0</span>
+      <button onclick="toggleIntel()" style="margin-left:auto;font-family:var(--font-mono);font-size:.7rem;padding:2px 8px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--muted);cursor:pointer">CLOSE ✕</button>
+    </div>
+    <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto"></div>
+  </div>
+</div>
+
 </div><!-- /layout -->
 
 <script>
@@ -591,6 +606,73 @@ async function refreshAll(){
   ]);
   resetProgress();
   _refreshTimer = setTimeout(refreshAll, INTERVAL);
+}
+
+// ── Intelligence Report ─────────────────────────────────────
+let _intelCooldown = 0;
+let _intelCooldownTimer = null;
+let _intelPanelOpen = false;
+
+function toggleIntel(){
+  _intelPanelOpen = !_intelPanelOpen;
+  document.getElementById('intel-panel').style.display = _intelPanelOpen ? 'block' : 'none';
+  if(_intelPanelOpen) loadReports();
+}
+
+async function loadReports(){
+  try{
+    const d = await fetchJSON('/api/intelligence-reports');
+    const list = document.getElementById('intel-reports-list');
+    document.getElementById('intel-count').textContent = d.reports.length;
+    if(!d.reports.length){
+      list.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:8px">No reports generated yet.</div>';
+      return;
+    }
+    list.innerHTML = d.reports.map((r,i) => `
+      <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);overflow:hidden">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--muted);font-family:var(--font-mono)">
+          <span style="color:var(--purple);font-weight:600">REPORT #${r.id}</span>
+          <span>${r.generated_at.replace('T',' ').slice(0,16)} UTC</span>
+          ${i===0?'<span style="background:rgba(188,140,255,.15);color:var(--purple);padding:1px 6px;border-radius:4px;font-size:.68rem">LATEST</span>':''}
+        </div>
+        <div style="padding:12px 14px;font-size:.82rem;line-height:1.65;white-space:pre-wrap;color:var(--text);max-height:400px;overflow-y:auto">${esc(r.content)}</div>
+      </div>
+    `).join('');
+  } catch(e){ console.warn('intel load error',e); }
+}
+
+async function generateReport(){
+  const btn = document.getElementById('btn-intel');
+  if(_intelCooldown > 0) return;
+
+  // Open panel if not open
+  if(!_intelPanelOpen){ _intelPanelOpen=true; document.getElementById('intel-panel').style.display='block'; }
+
+  btn.disabled = true;
+  btn.textContent = 'GENERATING…';
+  btn.style.opacity = '0.6';
+
+  try{
+    const d = await fetch('/api/intelligence-report', {method:'POST'});
+    if(!d.ok){ const e=await d.json(); throw new Error(e.detail||d.statusText); }
+    await loadReports();
+    // Start cooldown
+    _intelCooldown = 60;
+    _intelCooldownTimer = setInterval(()=>{
+      _intelCooldown--;
+      btn.textContent = _intelCooldown > 0 ? `INTEL ${_intelCooldown}s` : 'INTEL';
+      if(_intelCooldown <= 0){
+        clearInterval(_intelCooldownTimer);
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      }
+    }, 1000);
+  } catch(e){
+    alert('Report generation failed: ' + e.message);
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.textContent = 'INTEL';
+  }
 }
 
 // ── Boot ─────────────────────────────────────────────────────
