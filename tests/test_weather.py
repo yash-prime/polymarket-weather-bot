@@ -273,7 +273,9 @@ class TestComputePassesCorrectArgsToEnsemble:
         assert call_kwargs["metric"] == "temperature_2m_max"
         assert call_kwargs["threshold"] == pytest.approx(90.0)
         assert call_kwargs["operator"] == ">"
-        assert call_kwargs["forecast_date"] == "2026-06-10"
+        # window_start 2026-06-10 is beyond 15-day cap so gets clamped to today+15
+        from datetime import date, timedelta
+        assert call_kwargs["forecast_date"] == str(date.today() + timedelta(days=15))
 
     def test_default_operator_is_greater_than(self):
         parsed = dict(_PARSED_US)

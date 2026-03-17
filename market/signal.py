@@ -101,7 +101,7 @@ def compute_signal(market: Market, model_result: ModelResult) -> Signal | None:
         market.id, direction, adjusted_edge, raw_kelly_size, time_decay,
     )
 
-    return Signal(
+    sig = Signal(
         market_id=market.id,
         direction=direction,
         raw_kelly_size=raw_kelly_size,
@@ -109,3 +109,26 @@ def compute_signal(market: Market, model_result: ModelResult) -> Signal | None:
         model_prob=model_prob,
         market_price=market_price,
     )
+    _persist_signal(sig)
+    return sig
+
+
+def _persist_signal(signal: Signal, db_path: str | None = None) -> None:
+    """Write signal to DB so the dashboard can display model_prob and edge."""
+    try:
+        from db.init import get_connection
+        with get_connection(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO signals
+                  (market_id, direction, adjusted_edge, model_prob, market_price, raw_kelly_size)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal.market_id, signal.direction, signal.adjusted_edge,
+                    signal.model_prob, signal.market_price, signal.raw_kelly_size,
+                ),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("signal._persist_signal: failed: %s", exc)

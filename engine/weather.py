@@ -88,6 +88,19 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
     lon = float(lon)
     threshold = float(threshold)
 
+    # Clamp forecast_date: if window_start is in the past use today;
+    # if beyond 15 days (Open-Meteo max) cap at 15 days out.
+    from datetime import date as _date, timedelta as _td
+    _today = _date.today()
+    try:
+        _ws = _date.fromisoformat(window_start)
+        if _ws < _today:
+            window_start = str(_today)
+        elif _ws > _today + _td(days=15):
+            window_start = str(_today + _td(days=15))
+    except (ValueError, TypeError):
+        window_start = str(_today)
+
     om_variable = _METRIC_TO_OM_VARIABLE.get(metric)
     if om_variable is None:
         logger.warning(

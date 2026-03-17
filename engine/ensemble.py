@@ -180,12 +180,27 @@ def _extract_open_meteo_members(
         logger.warning("No Open-Meteo data for forecast_date=%s", forecast_date)
         return []
 
-    # Collect all member keys matching the metric
+    # Determine the base variable name in the response.
+    # The metric may be "temperature_2m_max" while the response has
+    # "temperature_2m" / "temperature_2m_member01" (Open-Meteo stores hourly
+    # values without the _max/_min/_sum suffix).
+    _suffixes = ("_max", "_min", "_sum", "_mean")
+    base_metric = metric
+    for _suf in _suffixes:
+        if metric.endswith(_suf):
+            base_metric = metric[: -len(_suf)]
+            break
+
+    # Collect all member keys matching the metric or its base form
     member_keys = [k for k in hourly if k.startswith(metric) and "member" in k]
     if not member_keys:
-        # Fallback: non-ensemble key (mean forecast)
-        if metric in hourly:
-            vals = [hourly[metric][i] for i in date_indices if hourly[metric][i] is not None]
+        member_keys = [k for k in hourly if k.startswith(base_metric) and "member" in k]
+
+    if not member_keys:
+        # Fallback: non-ensemble key (mean forecast) — try exact metric then base
+        key = metric if metric in hourly else (base_metric if base_metric in hourly else None)
+        if key:
+            vals = [hourly[key][i] for i in date_indices if hourly[key][i] is not None]
             return vals
         return []
 

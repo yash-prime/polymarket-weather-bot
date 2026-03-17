@@ -153,18 +153,18 @@ def _job_scan(clob_client) -> None:
                     from trading.trader import place_limit_order
                     place_limit_order(
                         clob_client,
-                        approved.market_id,
-                        approved.direction,
-                        approved.size,
-                        approved.price,
+                        approved.signal.market_id,
+                        approved.signal.direction,
+                        approved.final_size,
+                        approved.signal.market_price,
                     )
                 else:
                     from trading.paper_trader import place_limit_order as paper_place
                     paper_place(
-                        approved.market_id,
-                        approved.direction,
-                        approved.size,
-                        approved.price,
+                        approved.signal.market_id,
+                        approved.signal.direction,
+                        approved.final_size,
+                        approved.signal.market_price,
                     )
 
             except Exception as exc:  # noqa: BLE001

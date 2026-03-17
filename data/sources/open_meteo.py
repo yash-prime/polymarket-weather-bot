@@ -126,7 +126,7 @@ def get_ensemble(
         "latitude": lat,
         "longitude": lon,
         "hourly": vars_str,
-        "models": "ecmwf_ifs04",
+        "models": "icon_seamless",
         "forecast_days": 16,
         "timezone": "UTC",
     }
