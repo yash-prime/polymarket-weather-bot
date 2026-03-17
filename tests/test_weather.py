@@ -287,3 +287,51 @@ class TestComputePassesCorrectArgsToEnsemble:
         ):
             compute(market)
         assert mock_cp.call_args[1]["operator"] == ">"
+
+
+# ---------------------------------------------------------------------------
+# Exception handler coverage for _fetch_* helpers
+# ---------------------------------------------------------------------------
+
+
+class TestFetchHelperErrorHandling:
+    def _make_us_market(self):
+        return _make_market(parsed=dict(_PARSED_US))
+
+    def test_fetch_open_meteo_exception_returns_none(self):
+        """_fetch_open_meteo returns None on import/call error."""
+        with (
+            patch("data.sources.open_meteo.get_ensemble", side_effect=RuntimeError("http error")),
+            patch("engine.weather._fetch_noaa", return_value=None),
+            patch("engine.weather._fetch_ecmwf", return_value=None),
+            patch("engine.weather.compute_probability", return_value=None),
+        ):
+            result = compute(self._make_us_market())
+        # All sources None → compute_probability returns None
+        assert result is None
+
+    def test_fetch_noaa_exception_returns_none(self):
+        """_fetch_noaa returns None on error — other sources still work."""
+        from engine.models import ModelResult
+        fake_result = ModelResult(0.7, 0.9, 0.6, 0.8, 1, ["ecmwf"], [])
+        with (
+            patch("engine.weather._fetch_open_meteo", return_value=None),
+            patch("data.sources.noaa.get_forecast", side_effect=RuntimeError("timeout")),
+            patch("engine.weather._fetch_ecmwf", return_value=92.0),
+            patch("engine.weather.compute_probability", return_value=fake_result),
+        ):
+            result = compute(self._make_us_market())
+        assert result is not None
+
+    def test_fetch_ecmwf_exception_returns_none(self):
+        """_fetch_ecmwf returns None on DB error — other sources still work."""
+        from engine.models import ModelResult
+        fake_result = ModelResult(0.6, 0.8, 0.5, 0.7, 1, ["open_meteo_ensemble"], [])
+        with (
+            patch("engine.weather._fetch_open_meteo", return_value={}),
+            patch("engine.weather._fetch_noaa", return_value=None),
+            patch("data.sources.ecmwf.get_nearest_snapshot", side_effect=RuntimeError("db gone")),
+            patch("engine.weather.compute_probability", return_value=fake_result),
+        ):
+            result = compute(self._make_us_market())
+        assert result is not None
