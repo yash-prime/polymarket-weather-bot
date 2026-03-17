@@ -298,12 +298,12 @@ def _job_scan(clob_client) -> None:
                 if final_size <= 0:
                     continue
 
+                direction_word = "YES" if sig.direction == "YES" else "NO"
                 rationale = (
-                    f"{sig.direction} | model={sig.model_prob:.1%} "
-                    f"market={sig.market_price:.1%} "
-                    f"edge={sig.adjusted_edge:+.1%} "
-                    f"size=${final_size:.0f} USDC"
-                )
+                    f"Opened {direction_word} — model probability {sig.model_prob:.0%}, "
+                    f"market pricing {sig.market_price:.0%}, edge {sig.adjusted_edge:+.0%}. "
+                    f"{action.get('reason', '').strip()}"
+                ).rstrip(". ") + "."
 
                 try:
                     if mode == "live":

@@ -472,7 +472,9 @@ async function updateTrades(){
       const pnlHtml = isClosed && t.realized_pnl != null
         ? `<span style="font-family:var(--font-mono);font-size:.78rem;font-weight:600;color:${t.realized_pnl>=0?'var(--green)':'var(--red)'}">P&L ${t.realized_pnl>=0?'+':''}${t.realized_pnl.toFixed(2)}</span>`
         : '';
-      const reason = isClosed ? (t.close_reason || '') : (t.rationale || '');
+      const reason = isClosed
+        ? (t.close_reason || (t.rationale ? `Originally opened: ${t.rationale}` : 'Closed automatically.'))
+        : (t.rationale || '');
       return `<div class="trade-row" style="${isClosed?'opacity:.75':''}">
         <div class="trade-meta">
           ${dir}${statusChipHtml}

@@ -383,58 +383,65 @@ def api_generate_report():
     positions_block = "\n\n".join(pos_rows)
 
     # ── Prompt ─────────────────────────────────────────────────
-    prompt = f"""You are reviewing a live paper trading account on Polymarket weather prediction markets. Produce an **Intelligence Report** in clean markdown.
+    prompt = f"""PORTFOLIO SNAPSHOT — {now_utc.strftime('%Y-%m-%d %H:%M UTC')}
 
-═══════════════════════════════════════
-ACCOUNT SNAPSHOT  ({now_utc.strftime('%Y-%m-%d %H:%M UTC')})
-═══════════════════════════════════════
-Starting Capital : $2,500
+Starting Capital : $2,500.00
 Current Equity   : ${equity:,.2f}
-Total P&L        : {total_pnl:+.2f} ({total_pnl/STARTING_CAPITAL*100:+.2f}%)
+Total P&L        : {total_pnl:+.2f} ({total_pnl/STARTING_CAPITAL*100:+.2f}% of starting capital)
   Unrealized     : {unrealized:+.2f}
   Realized       : {realized:+.2f}
-Deployed         : ${deployed:,.2f}  ({deployed/STARTING_CAPITAL*100:.0f}% of capital)
+Deployed         : ${deployed:,.2f}  ({deployed/STARTING_CAPITAL*100:.0f}% of capital at risk)
 Available        : ${STARTING_CAPITAL - deployed:,.2f}
 Open Positions   : {len(positions)}
-═══════════════════════════════════════
 
-POSITIONS (sorted by expiry, soonest first):
+OPEN POSITIONS (sorted by expiry, soonest first):
 {positions_block}
 
-═══════════════════════════════════════
-REPORT INSTRUCTIONS
-═══════════════════════════════════════
-Write exactly these sections in order. Use the markdown headers shown.
-Be specific — reference position numbers (#01, #02 …) when discussing individual trades.
+---
+INSTRUCTIONS: Write a detailed Intelligence Report in markdown. Cover every section below fully — do not skip any, do not truncate. Use specific position numbers, dollar amounts, and percentages throughout. Explain your reasoning in plain English that a non-quant can understand.
 
 ## 📊 Portfolio Overview
-2–3 sentences on overall health: equity trend, deployment level, P&L quality (is it driven by real edge or noise?).
+Write 4–5 sentences. Explain: current equity vs starting capital, what percentage is deployed, overall P&L trajectory, and whether the portfolio is in a healthy state. Mention how many positions are winning vs losing.
 
-## 🏆 Top Performers & 📉 Worst Positions
-List the top 3 winning and bottom 3 losing positions by dollar P&L.
-For each: position number, question (shortened), P&L, and one sentence on why it's moving that way.
+## 🏆 Top Performers
+List ALL positions with positive P&L, ranked best to worst. For each write one line: position number, shortened question, dollar P&L, and one sentence explaining why this position is profitable (is the market moving in our favor? is the edge playing out?).
 
-## ⚠️ Contradicting Trades
-Identify any pairs where we hold opposing views that logically conflict — e.g. YES on "Seattle > 5in rain" AND NO on "Seattle > 3in rain" in the same month (if YES on >5in is true, NO on >3in is wrong).
-If none, write "None detected."
+## 📉 Worst Positions
+List ALL positions with negative P&L, ranked worst to best. For each: position number, shortened question, dollar loss, and one sentence on what went wrong or what risk remains. Be honest — if a position looks bad, say so.
 
-## 🔁 Duplicate / Overlapping Exposure
-Identify groups of positions covering the same underlying event or location with adjacent thresholds — e.g. betting on temperature buckets 14°C, 15°C, 16°C, 17°C, 18°C in the same city/day.
-Explain what that means for combined risk.
-If none, write "None detected."
+## ⚠️ Contradicting / Conflicting Trades
+Look carefully for any bets that logically conflict with each other. Examples:
+- YES on "Seattle rain > 5 inches" AND YES on "Seattle rain < 3 inches" in the same month (both can't win)
+- YES on "temp > 15°C" AND YES on "temp < 14°C" same city same day
+If you find conflicts, name the positions, explain the contradiction, and say what should happen.
+If none, write "None found — conflict resolution appears to be working."
 
-## 🎯 Risk & Concentration
-- Which city / metric / event type is most over-represented?
-- Any positions expiring within 2 days that need attention?
-- Any position sized > $30 with a negative P&L trend?
+## 🔁 Overlapping / Redundant Exposure
+Look for clusters of positions on the same underlying event with adjacent bins — e.g. multiple temperature buckets for the same city and date, or multiple precipitation ranges for the same city and month. Explain the combined exposure and what it means. If this is fine, say why.
 
-## 💡 Key Takeaways
-3–5 bullet points. Each starts with an action verb. Be direct and specific."""
+## 🎯 Concentration & Risk Analysis
+- Which city, metric, or event type has the most capital at risk? Give exact figures.
+- Which positions expire soonest — are they positioned correctly for the remaining time?
+- Are there any positions where the model probability is far from the market price but P&L is still negative? Explain the discrepancy.
+- Any positions with model probability at 0% or 100% — are these believable?
+
+## 🧠 Model Quality Check
+Look at the edge figures and model probabilities. Call out anything suspicious:
+- Model showing 0% or 100% probability (extreme — usually a data or parsing issue)
+- Very high edge (>50%) that seems too good to be true
+- Positions where our thesis seems clearly wrong given the current P&L
+
+## 💡 Recommended Actions
+Give 5–7 specific, actionable bullet points. Each must start with an action verb and reference specific positions by number. Examples: "Close #03 immediately because...", "Monitor #07 closely — expires in 2 days and is underwater", "Investigate why #12 shows 100% model probability"."""
 
     SYSTEM = (
-        "You are a sharp quantitative trading analyst. "
-        "Output clean markdown only — no preamble, no 'here is your report', just the sections. "
-        "Be concise, specific, and ruthlessly actionable. Use numbers."
+        "You are a senior quantitative trading analyst reviewing a prediction market portfolio. "
+        "Your job is to write a thorough, honest Intelligence Report that clearly explains what is happening, "
+        "what is working, what is broken, and what to do about it. "
+        "Write in plain English — specific, direct, and complete. "
+        "Never truncate sections. Never say 'see above'. Never use filler phrases. "
+        "Output clean markdown only — no preamble, no 'here is your report', start directly with the first section header. "
+        "Use exact dollar amounts and percentages from the data provided."
     )
 
     try:

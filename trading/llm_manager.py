@@ -125,11 +125,24 @@ def _rule_based_conflict_closes(positions: list[dict]) -> list[dict]:
             key=lambda p: float(p.get("unrealized_pnl", 0)),
             reverse=True,
         )
+        best = sorted_pos[0]
+        # Parse a readable group label from the key (city|date|metric)
+        parts = group_key.split("|")
+        city = parts[0].title() if parts else group_key
+        date = parts[1] if len(parts) > 1 else ""
+        metric = parts[2].replace("_", " ") if len(parts) > 2 else ""
+        group_label = f"{city} {metric} {date}".strip()
+
         for pos in sorted_pos[1:]:
+            best_pnl = float(best.get("unrealized_pnl", 0))
             actions.append({
                 "action": "close",
                 "market_id": pos["market_id"],
-                "reason": f"rule-based conflict resolution: group [{group_key}] has {len(group_positions)} mutually exclusive positions",
+                "reason": (
+                    f"Conflict cleanup — {len(group_positions)} bets on mutually exclusive "
+                    f"{group_label} outcomes. Keeping best position (P&L {best_pnl:+.2f}), "
+                    f"closing this one."
+                ),
             })
             logger.info(
                 "llm_manager: rule-based CLOSE %s in group [%s] (pnl=%.1f)",
