@@ -1,0 +1,37 @@
+# Polymarket Weather Bot — Pinned Dependencies
+# Python 3.11+ required
+
+# --- Polymarket ---
+py-clob-client==0.18.0
+
+# --- Scheduling ---
+APScheduler==3.10.4
+
+# --- ECMWF ---
+ecmwf-opendata==0.3.3
+cfgrib==0.9.10.4
+
+# --- Retry logic ---
+tenacity==8.2.3
+
+# --- LLM ---
+anthropic==0.25.0
+
+# --- Dashboard ---
+streamlit==1.32.0
+
+# --- Notifications ---
+python-telegram-bot==21.1.1
+
+# --- Env loading ---
+python-dotenv==1.0.1
+
+# --- HTTP ---
+requests==2.31.0
+
+# --- Data science ---
+pandas==2.1.0
+numpy==1.26.0
+
+# --- Historical weather ---
+meteostat==1.6.8
