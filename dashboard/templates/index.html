@@ -400,7 +400,7 @@ async function updateTrades(){
       const dir  = t.direction==='YES'
         ? `<span class="chip chip-success">YES</span>`
         : `<span class="chip chip-failed">NO</span>`;
-      const ts = t.created_at ? t.created_at.split('T')[0]+' '+t.created_at.split('T')[1]?.slice(0,5) : '';
+      const ts = t.created_at ? t.created_at.replace('T',' ').slice(0,16) : '';
       return `<div class="trade-row">
         <div class="trade-meta">
           ${dir}
@@ -419,7 +419,7 @@ async function updatePortfolio(){
   try{
     const d = await fetchJSON('/api/portfolio');
     const s = d.snapshot || {};
-    const pnl = s.total_pnl!=null ? s.total_pnl : null;
+    const pnl = s.total_equity!=null ? s.total_equity - 100 : (s.unrealized_pnl!=null ? s.unrealized_pnl : null);
     const pnlColor = pnl==null?'muted': pnl>=0?'green':'red';
 
     document.getElementById('portfolio-stats').innerHTML = `

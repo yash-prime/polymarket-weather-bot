@@ -167,7 +167,7 @@ def _compute_realized(trades_table: str, db_path: str | None) -> float:
 
 
 def _compute_daily_pnl(trades_table: str, db_path: str | None) -> float:
-    """Sum of P&L from trades since midnight UTC today."""
+    """Realized P&L from trades closed today (open positions are not losses yet)."""
     try:
         from db.init import get_connection
 
@@ -175,17 +175,17 @@ def _compute_daily_pnl(trades_table: str, db_path: str | None) -> float:
         with get_connection(db_path) as conn:
             row = conn.execute(
                 f"""
-                SELECT SUM(final_size) as daily_spent
+                SELECT SUM(
+                    CASE WHEN status = 'filled'
+                         THEN final_size * (simulated_fill_price - 1.0)
+                         ELSE 0.0 END
+                ) as realized_today
                 FROM {trades_table}
-                WHERE status = 'open'
-                  AND created_at >= ?
+                WHERE closed_at >= ?
                 """,  # noqa: S608
                 (today_start,),
             ).fetchone()
-        # Daily P&L approximation: net spend today
-        # Negative (spent capital) until positions close
-        daily_spent = float(row["daily_spent"] or 0)
-        return -daily_spent  # Negative represents capital deployed today
+        return float(row["realized_today"] or 0)
 
     except Exception as exc:  # noqa: BLE001
         logger.warning("portfolio._compute_daily_pnl: failed: %s", exc)

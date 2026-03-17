@@ -205,7 +205,7 @@ async def api_portfolio():
     try:
         with _db() as conn:
             snap = conn.execute("""
-                SELECT * FROM portfolio_snapshots ORDER BY created_at DESC LIMIT 1
+                SELECT * FROM portfolio_snapshots ORDER BY snapshot_at DESC LIMIT 1
             """).fetchone()
 
             positions = conn.execute("""
