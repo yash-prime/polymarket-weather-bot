@@ -57,15 +57,26 @@ def analyze_and_decide(
     try:
         prompt = _build_prompt(open_positions, new_signals, portfolio_summary)
         raw = _call_llm(prompt)
-        if raw is None:
-            logger.warning("llm_manager: LLM call returned None — holding all positions")
-            return []
 
-        actions = _parse_response(raw)
-        actions = _validate_actions(actions, open_positions, new_signals, portfolio_summary)
+        if raw is None:
+            logger.warning("llm_manager: LLM unavailable — running rule-based conflict resolution")
+            actions = _rule_based_conflict_closes(open_positions)
+        else:
+            actions = _parse_response(raw)
+            actions = _validate_actions(actions, open_positions, new_signals, portfolio_summary)
+
+            # Safety net: if LLM returned nothing but conflicts exist, close them
+            if not actions:
+                rule_actions = _rule_based_conflict_closes(open_positions)
+                if rule_actions:
+                    logger.info(
+                        "llm_manager: LLM returned no actions but %d conflicts found — applying rule-based closes",
+                        len(rule_actions),
+                    )
+                    actions = rule_actions
 
         logger.info(
-            "llm_manager: LLM returned %d actions (open=%d, close=%d)",
+            "llm_manager: %d actions (open=%d, close=%d)",
             len(actions),
             sum(1 for a in actions if a["action"] == "open"),
             sum(1 for a in actions if a["action"] == "close"),
@@ -86,6 +97,51 @@ def analyze_and_decide(
 
 
 # ---------------------------------------------------------------------------
+# Rule-based fallback — runs when LLM is unavailable
+# ---------------------------------------------------------------------------
+
+
+def _rule_based_conflict_closes(positions: list[dict]) -> list[dict]:
+    """
+    Close extra positions in conflict groups without needing LLM.
+
+    For each event group (city + date + metric) that has more than one
+    position, keep the one with the best unrealized P&L and close the rest.
+    Returns a list of close action dicts.
+    """
+    if not positions:
+        return []
+
+    groups = group_positions_by_event(positions)
+    actions: list[dict] = []
+
+    for group_key, group_positions in groups.items():
+        if len(group_positions) <= 1:
+            continue  # no conflict
+
+        # Keep the best P&L, close all others
+        sorted_pos = sorted(
+            group_positions,
+            key=lambda p: float(p.get("unrealized_pnl", 0)),
+            reverse=True,
+        )
+        for pos in sorted_pos[1:]:
+            actions.append({
+                "action": "close",
+                "market_id": pos["market_id"],
+                "reason": f"rule-based conflict resolution: group [{group_key}] has {len(group_positions)} mutually exclusive positions",
+            })
+            logger.info(
+                "llm_manager: rule-based CLOSE %s in group [%s] (pnl=%.1f)",
+                pos["market_id"][:16],
+                group_key,
+                float(pos.get("unrealized_pnl", 0)),
+            )
+
+    return actions
+
+
+# ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
 
@@ -95,82 +151,58 @@ def _build_prompt(
     signals: list[dict],
     summary: dict,
 ) -> str:
-    """Build a token-efficient prompt for the LLM portfolio manager."""
+    """Build a compact prompt focused on conflicts and top signals."""
     parts: list[str] = []
 
-    # Portfolio summary
-    parts.append("PORTFOLIO:")
+    # One-line portfolio summary
     parts.append(
-        f"  equity=${summary['equity']:.0f} deployed=${summary['deployed']:.0f} "
-        f"available=${summary['available']:.0f} "
-        f"realized_pnl=${summary['realized_pnl']:.0f} "
-        f"unrealized_pnl=${summary['unrealized_pnl']:.0f} "
-        f"open_positions={summary['open_position_count']}"
+        f"PORTFOLIO: equity=${summary['equity']:.0f} deployed=${summary['deployed']:.0f} "
+        f"avail=${summary['available']:.0f} pnl=${summary['unrealized_pnl']:.0f} "
+        f"pos={summary['open_position_count']}"
     )
-    parts.append("")
 
-    # Open positions grouped by event (cap at 40 positions for token efficiency)
+    # Only show CONFLICT groups (>1 position) — these need LLM attention
     if positions:
         groups = group_positions_by_event(positions)
-        total_pos = len(positions)
-        parts.append(f"OPEN POSITIONS ({total_pos} total, {len(groups)} event groups):")
-        shown = 0
-        for group_key, group_positions in groups.items():
-            parts.append(f"  --- Group: {group_key} ({len(group_positions)} positions) ---")
-            if len(group_positions) > 2:
-                parts.append("  *** WARNING: >2 positions in mutually exclusive group ***")
-            for p in group_positions:
-                if shown >= 40:
-                    break
-                q_short = str(p.get("question", ""))[:70]
-                parts.append(
-                    f"    id={p['market_id'][:16]} dir={p.get('direction','?')} "
-                    f"size=${float(p.get('size', 0)):.0f} entry={float(p.get('entry_price', 0)):.2f} "
-                    f"now={float(p.get('yes_price', 0)):.2f} "
-                    f"pnl=${float(p.get('unrealized_pnl', 0)):.1f} "
-                    f"q=\"{q_short}\""
-                )
-                shown += 1
-            if shown >= 40:
-                break
-        if total_pos > 40:
-            parts.append(f"  ... and {total_pos - 40} more positions (shown 40 worst groups first)")
-        parts.append("")
-    else:
-        parts.append("OPEN POSITIONS: none")
-        parts.append("")
+        conflict_groups = {k: v for k, v in groups.items() if len(v) > 1}
+        solo_count = sum(1 for v in groups.values() if len(v) == 1)
 
-    # New signals sorted by absolute edge
+        if conflict_groups:
+            parts.append(f"CONFLICTS ({len(conflict_groups)} groups, {solo_count} solo positions ok):")
+            for group_key, group_positions in list(conflict_groups.items())[:8]:
+                parts.append(f"  [{group_key}] {len(group_positions)} positions — MUTUALLY EXCLUSIVE:")
+                for p in group_positions:
+                    parts.append(
+                        f"    id={p['market_id'][:16]} dir={p.get('direction','?')} "
+                        f"size=${float(p.get('size', 0)):.0f} "
+                        f"pnl=${float(p.get('unrealized_pnl', 0)):.1f}"
+                    )
+        else:
+            parts.append(f"CONFLICTS: none ({len(groups)} groups, all ok)")
+    else:
+        parts.append("POSITIONS: none")
+
+    # Top 8 new signals by absolute edge
     if signals:
         sorted_signals = sorted(signals, key=lambda s: abs(float(s.get("edge", 0))), reverse=True)
-        parts.append(f"NEW SIGNALS ({len(sorted_signals)}):")
-        for s in sorted_signals[:20]:  # Cap at 20 to stay token-efficient
-            q_short = str(s.get("question", ""))[:80]
+        parts.append(f"TOP SIGNALS ({min(8, len(sorted_signals))} of {len(sorted_signals)}):")
+        for s in sorted_signals[:8]:
             parts.append(
                 f"  id={s['market_id'][:16]} dir={s.get('direction','?')} "
                 f"edge={float(s.get('edge', 0)):+.1%} "
-                f"model={float(s.get('model_prob', 0)):.1%} "
-                f"market={float(s.get('market_price', 0)):.1%} "
-                f"kelly_size=${float(s.get('kelly_size', 0)):.0f} "
-                f"q=\"{q_short}\""
+                f"kelly=${float(s.get('kelly_size', 0)):.0f}"
             )
-        parts.append("")
     else:
-        parts.append("NEW SIGNALS: none")
-        parts.append("")
+        parts.append("SIGNALS: none")
 
-    # Instructions
-    parts.append("RULES:")
-    parts.append("1. Markets with the same city + date + metric are MUTUALLY EXCLUSIVE — only one bin wins.")
-    parts.append("2. Maximum 2 positions per event group (city+date+metric).")
-    parts.append("3. If a group has >2 positions, close the weakest (worst edge or biggest loss).")
-    parts.append("4. For new signals, only open if: (a) no contradicting open position in same group, "
-                 "(b) capital available, (c) edge > 8%.")
-    parts.append("5. Be conservative — doing nothing is better than opening a bad position.")
-    parts.append("6. Return ONLY a valid JSON array of actions. Each action:")
-    parts.append('   {"action":"open","market_id":"...","direction":"YES"|"NO","size":25.0,"reason":"..."}')
-    parts.append('   {"action":"close","market_id":"...","reason":"..."}')
-    parts.append("7. If no action needed, return an empty array: []")
+    # Compact instructions
+    parts.append("RULES: same city+date+metric = mutually exclusive (one bin wins). "
+                 "Close extras in conflict groups (keep best pnl). "
+                 "Open only if edge>8% and no same-group conflict. "
+                 "Return JSON array only: "
+                 '[{"action":"close","market_id":"...","reason":"..."}] '
+                 'or [{"action":"open","market_id":"...","direction":"YES","size":25.0,"reason":"..."}] '
+                 "or []")
 
     return "\n".join(parts)
 

@@ -93,6 +93,12 @@ def generate(
             f"Unexpected OpenRouter response structure: {data}"
         ) from exc
 
+    if text is None:
+        raise ValueError(
+            f"OpenRouter returned null content — model may have refused the request "
+            f"(model={settings.OPENROUTER_MODEL})"
+        )
+
     logger.debug(
         "openrouter.generate: model=%s tokens_used=%s",
         settings.OPENROUTER_MODEL,

@@ -237,7 +237,7 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
         <button id="btn-intel" onclick="generateReport()" style="margin-left:auto;font-family:var(--font-mono);font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);border:1px solid var(--purple);background:rgba(188,140,255,.1);color:var(--purple);cursor:pointer;letter-spacing:.04em;text-transform:uppercase">INTEL</button>
       </div>
       <div class="card-body" style="padding:8px">
-        <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:8px;max-height:800px;overflow-y:auto">
+        <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:8px">
           <div style="color:var(--muted);font-size:.8rem;padding:4px">No reports yet — click INTEL to generate.</div>
         </div>
       </div>
@@ -460,18 +460,28 @@ async function updateTrades(){
       return;
     }
     el.innerHTML = d.trades.map(t=>{
-      const dir  = t.direction==='YES'
+      const isClosed = t.status === 'closed';
+      const dir = t.direction==='YES'
         ? `<span class="chip chip-success">YES</span>`
         : `<span class="chip chip-failed">NO</span>`;
-      const ts = t.created_at ? t.created_at.replace('T',' ').slice(0,16) : '';
-      return `<div class="trade-row">
+      const statusChipHtml = isClosed
+        ? `<span style="font-family:var(--font-mono);font-size:.62rem;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(248,81,73,.15);color:var(--red)">CLOSED</span>`
+        : `<span style="font-family:var(--font-mono);font-size:.62rem;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(63,185,80,.15);color:var(--green)">OPEN</span>`;
+      const ts = (isClosed ? t.closed_at : t.created_at) || t.created_at || '';
+      const tsStr = ts.replace('T',' ').slice(0,16);
+      const pnlHtml = isClosed && t.realized_pnl != null
+        ? `<span style="font-family:var(--font-mono);font-size:.78rem;font-weight:600;color:${t.realized_pnl>=0?'var(--green)':'var(--red)'}">P&L ${t.realized_pnl>=0?'+':''}${t.realized_pnl.toFixed(2)}</span>`
+        : '';
+      const reason = isClosed ? (t.close_reason || '') : (t.rationale || '');
+      return `<div class="trade-row" style="${isClosed?'opacity:.75':''}">
         <div class="trade-meta">
-          ${dir}
+          ${dir}${statusChipHtml}
           <span class="num" style="font-family:var(--font-mono);font-size:.78rem">${usd(t.size)} @ ${pct(t.price)}</span>
-          <span class="muted" style="font-size:.7rem;margin-left:auto">${ts}</span>
+          ${pnlHtml}
+          <span class="muted" style="font-size:.7rem;margin-left:auto">${tsStr}</span>
         </div>
         <div class="trade-q">${esc(t.question||t.market_id)}</div>
-        ${t.rationale?`<div class="trade-rationale">${esc(t.rationale)}</div>`:''}
+        ${reason?`<div class="trade-rationale">${esc(reason)}</div>`:''}
       </div>`;
     }).join('');
   } catch(e){ console.warn('trades error',e); }
@@ -659,14 +669,14 @@ async function loadReports(){
       return;
     }
     list.innerHTML = d.reports.map((r,i) => `
-      <div style="background:var(--bg2);border:1px solid ${i===0?'var(--purple)':'var(--border2)'};border-radius:var(--radius);overflow:hidden">
+      <div style="background:var(--bg2);border:1px solid ${i===0?'var(--purple)':'var(--border2)'};border-radius:var(--radius);overflow:visible">
         <div class="intel-report-header" data-collapsible="${i>0?'true':'false'}"
              style="padding:7px 12px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--muted);font-family:var(--font-mono);${i===0?'background:rgba(188,140,255,.06)':'cursor:pointer;user-select:none'}">
           <span style="color:var(--purple);font-weight:700">REPORT #${r.id}</span>
           <span>${r.generated_at.replace('T',' ').slice(0,16)} UTC</span>
           ${i===0?'<span style="background:rgba(188,140,255,.18);color:var(--purple);padding:1px 7px;border-radius:10px;font-size:.66rem;font-weight:600;letter-spacing:.05em">LATEST</span>':'<span class="intel-toggle-hint" style="color:var(--muted);font-size:.8rem">&#9656; click to expand</span>'}
         </div>
-        <div class="intel-report-body" style="padding:14px 16px;font-size:.8rem;line-height:1.7;color:var(--text);${i>0?'display:none':'display:block'}">${mdToHtml(r.content)}</div>
+        <div class="intel-report-body" style="padding:14px 16px;font-size:.8rem;line-height:1.7;color:var(--text);max-height:600px;overflow-y:auto;${i>0?'display:none':'display:block'}">${mdToHtml(r.content)}</div>
       </div>
     `).join('');
     // Attach collapse/expand handlers via event delegation

@@ -101,9 +101,10 @@ def close_position(
                 (market_id,),
             )
             conn.execute(
-                "UPDATE paper_trades SET status='closed', closed_at=datetime('now'), realized_pnl=? "
+                "UPDATE paper_trades SET status='closed', closed_at=datetime('now'), "
+                "realized_pnl=?, close_reason=? "
                 "WHERE market_id=? AND status='open'",
-                (realized, market_id),
+                (realized, reason or None, market_id),
             )
             conn.commit()
 

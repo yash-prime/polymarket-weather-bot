@@ -197,10 +197,11 @@ async def api_trades():
             rows = conn.execute("""
                 SELECT t.id, t.market_id, t.direction, t.final_size AS size,
                        t.simulated_fill_price AS price, t.status,
-                       t.created_at, t.rationale, m.question
+                       t.created_at, t.closed_at, t.rationale,
+                       t.realized_pnl, t.close_reason, m.question
                 FROM paper_trades t
                 LEFT JOIN markets m ON m.id = t.market_id
-                ORDER BY t.created_at DESC LIMIT 30
+                ORDER BY COALESCE(t.closed_at, t.created_at) DESC LIMIT 100
             """).fetchall()
 
         return {"trades": [dict(r) for r in rows]}
