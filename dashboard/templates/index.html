@@ -118,10 +118,10 @@ td{padding:7px 10px;vertical-align:middle;max-width:300px}
 .bar-val{font-family:var(--font-mono);font-size:.75rem;color:var(--muted);text-align:right}
 
 /* ── Portfolio stat grid ─────────────────────────────────── */
-.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .stat-box{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);padding:10px 12px}
 .stat-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px}
-.stat-val{font-family:var(--font-mono);font-size:1.1rem;font-weight:600}
+.stat-val{font-family:var(--font-mono);font-size:0.95rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ── Mini positions table ─────────────────────────────────── */
 .pos-list{display:flex;flex-direction:column;gap:4px;margin-top:10px}
@@ -158,7 +158,7 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
 @media(max-width:900px){
   .main{grid-template-columns:1fr}
   .col-right{order:-1}
-  .stat-grid{grid-template-columns:repeat(4,1fr)}
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
 }
 @media(max-width:500px){
   .stat-grid{grid-template-columns:1fr 1fr}
@@ -465,17 +465,28 @@ async function updatePortfolio(){
   try{
     const d = await fetchJSON('/api/portfolio');
     const s = d.snapshot || {};
-    const pnl = s.total_equity!=null ? s.total_equity - 100 : (s.unrealized_pnl!=null ? s.unrealized_pnl : null);
+    const startingCapital = d.starting_capital || 2000;
+    const pnl = s.total_equity!=null ? s.total_equity - startingCapital : (s.unrealized_pnl!=null ? s.unrealized_pnl : null);
     const pnlColor = pnl==null?'muted': pnl>=0?'green':'red';
+    const available = startingCapital - (d.deployed||0);
+    const availColor = available>=0?'green':'red';
 
     document.getElementById('portfolio-stats').innerHTML = `
       <div class="stat-box">
-        <div class="stat-label">Balance</div>
+        <div class="stat-label">Equity</div>
         <div class="stat-val blue">${s.total_equity!=null ? usd(s.total_equity) : '—'}</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Total P&amp;L</div>
         <div class="stat-val ${pnlColor}">${pnl!=null?(pnl>=0?'+':'')+usd(pnl):'—'}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Deployed</div>
+        <div class="stat-val yellow">${d.deployed!=null ? usd(d.deployed) : '—'}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Available</div>
+        <div class="stat-val ${availColor}">${usd(available)}</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Positions</div>
@@ -492,14 +503,6 @@ async function updatePortfolio(){
       <div class="stat-box">
         <div class="stat-label">Day Loss</div>
         <div class="stat-val ${s.daily_loss_pct!=null&&s.daily_loss_pct>0.05?'red':'muted'}">${s.daily_loss_pct!=null?(s.daily_loss_pct*100).toFixed(2)+'%':'—'}</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Deployed</div>
-        <div class="stat-val yellow">${d.deployed!=null ? usd(d.deployed) : '—'}</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Available</div>
-        <div class="stat-val muted">$100.00</div>
       </div>`;
 
     const posEl = document.getElementById('positions-list');

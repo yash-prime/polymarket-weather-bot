@@ -48,10 +48,27 @@ logger = logging.getLogger("main")
 
 
 def _persist_weak_signal(market, model_result) -> None:
-    """Persist model probability to signals table even when edge is too small to trade."""
+    """Persist model probability to signals table even when edge is too small to trade.
+
+    Only inserts if no signal has been written for this market in the current scan
+    window (last SCAN_INTERVAL_MINUTES minutes). This prevents stale weak signals
+    from shadowing strong signals written earlier in the same cycle.
+    """
     try:
         from db.init import get_connection
         with get_connection() as conn:
+            # Skip insert if a fresher signal already exists for this market
+            recent = conn.execute(
+                """
+                SELECT id FROM signals
+                WHERE market_id = ?
+                  AND created_at >= datetime('now', ? || ' minutes')
+                LIMIT 1
+                """,
+                (market.id, f"-{settings.SCAN_INTERVAL_MINUTES}"),
+            ).fetchone()
+            if recent:
+                return
             conn.execute(
                 """
                 INSERT INTO signals

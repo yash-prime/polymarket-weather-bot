@@ -146,22 +146,19 @@ def _compute_unrealized(
 
 
 def _compute_realized(trades_table: str, db_path: str | None) -> float:
-    """Sum of P&L from all closed/filled positions."""
+    """Sum of realized_pnl from all settled (filled) positions."""
     try:
         from db.init import get_connection
 
         with get_connection(db_path) as conn:
-            price_col = "price" if trades_table == "trades" else "simulated_fill_price"
             row = conn.execute(
                 f"""
-                SELECT SUM(final_size) as realized
+                SELECT SUM(realized_pnl) as realized
                 FROM {trades_table}
-                WHERE status IN ('filled', 'closed')
+                WHERE status = 'filled'
                 """,  # noqa: S608
             ).fetchone()
-        # Simple realized: sum of prices from filled trades (approximation)
-        # In production this would track entry vs exit prices
-        return 0.0  # Placeholder — accurate tracking requires position close prices
+        return float(row["realized"] or 0.0)
 
     except Exception as exc:  # noqa: BLE001
         logger.warning("portfolio._compute_realized: failed: %s", exc)
@@ -205,7 +202,7 @@ def _compute_total_equity(
 
     Paper trading always starts at $100.
     """
-    STARTING_CAPITAL = 100.0
+    STARTING_CAPITAL = 2000.0
     return STARTING_CAPITAL + realized_pnl + unrealized_pnl
 
 

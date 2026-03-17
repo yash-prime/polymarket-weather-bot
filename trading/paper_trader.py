@@ -153,9 +153,9 @@ def settle_resolved_positions(db_path: str | None = None) -> int:
                     (p["market_id"],),
                 )
                 conn.execute(
-                    "UPDATE paper_trades SET status='filled', closed_at=datetime('now') "
+                    "UPDATE paper_trades SET status='filled', closed_at=datetime('now'), realized_pnl=? "
                     "WHERE market_id=? AND status='open'",
-                    (p["market_id"],),
+                    (realized, p["market_id"]),
                 )
                 outcome = "WIN" if ((direction == "YES" and yes_wins) or (direction == "NO" and not yes_wins)) else "LOSS"
                 logger.info("paper_trader.settle: %s %s %s realized=%.2f USDC", outcome, direction, p["market_id"], realized)

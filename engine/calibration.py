@@ -67,7 +67,7 @@ def run_calibration_batch(db_path: str | None = None) -> None:
                 m.parsed,
                 m.end_date,
                 s.model_prob
-            FROM trades t
+            FROM paper_trades t
             JOIN markets  m ON m.id        = t.market_id
             JOIN signals  s ON s.market_id = t.market_id
             WHERE t.status       IN ('filled', 'open')

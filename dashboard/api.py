@@ -254,7 +254,7 @@ async def api_portfolio():
             "snapshot": snapshot,
             "positions": pos_list,
             "deployed": round(deployed, 2),
-            "starting_capital": 100.0,
+            "starting_capital": 2000.0,
         }
     except Exception as e:
         return {"snapshot": {}, "positions": [], "error": str(e)}
