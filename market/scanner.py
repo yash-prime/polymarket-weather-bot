@@ -346,15 +346,35 @@ def _extract_yes_price(market: dict) -> float:
     """
     Extract the YES token price from various Gamma API response shapes.
 
+    outcomePrices may be a JSON string '["0.38", "0.62"]' or an actual list.
+    YES token is always the first element.
     Falls back to 0.5 (50/50) if no price is available.
     """
-    # Direct outcomePrices field: ["0.40", "0.60"] → YES is first token
+    import json as _json
+
     prices = market.get("outcomePrices")
-    if prices and len(prices) >= 1:
+
+    # Gamma API returns outcomePrices as a JSON-encoded string — parse it
+    if isinstance(prices, str):
+        try:
+            prices = _json.loads(prices)
+        except Exception:
+            prices = None
+
+    if prices and isinstance(prices, list) and len(prices) >= 1:
         try:
             return float(prices[0])
         except (ValueError, TypeError):
             pass
+
+    # lastTradePrice or bestAsk as fallback
+    for field in ("lastTradePrice", "bestAsk", "bestBid"):
+        val = market.get(field)
+        if val is not None:
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                pass
 
     # Flat yes_price field
     yes_price = market.get("yes_price") or market.get("yesPrice")

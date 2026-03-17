@@ -149,9 +149,10 @@ def _compute_realized(trades_table: str, db_path: str | None) -> float:
         from db.init import get_connection
 
         with get_connection(db_path) as conn:
+            price_col = "price" if trades_table == "trades" else "simulated_fill_price"
             row = conn.execute(
                 f"""
-                SELECT SUM(final_size * (price - final_size / final_size)) as realized
+                SELECT SUM(final_size) as realized
                 FROM {trades_table}
                 WHERE status IN ('filled', 'closed')
                 """,  # noqa: S608
@@ -174,7 +175,7 @@ def _compute_daily_pnl(trades_table: str, db_path: str | None) -> float:
         with get_connection(db_path) as conn:
             row = conn.execute(
                 f"""
-                SELECT SUM(final_size * price) as daily_spent
+                SELECT SUM(final_size) as daily_spent
                 FROM {trades_table}
                 WHERE status = 'open'
                   AND created_at >= ?
@@ -223,8 +224,8 @@ def _compute_total_equity(
     except Exception as exc:  # noqa: BLE001
         logger.warning("portfolio._compute_total_equity: snapshot read failed: %s", exc)
 
-    # First run: default starting capital
-    return settings.MAX_POSITION_USDC * 10.0
+    # First run: default starting capital ($100 paper balance)
+    return 100.0
 
 
 def _compute_daily_loss_pct(daily_pnl: float, total_equity: float) -> float:
