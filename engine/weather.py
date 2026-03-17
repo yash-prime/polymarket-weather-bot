@@ -27,8 +27,17 @@ Error handling
 Each source failure is logged at WARNING level and treated as a degraded
 source. The function returns None only when ALL sources fail — a degraded
 but non-empty ModelResult is preferable to dropping the market entirely.
+
+Caching
+-------
+_cache holds successful ModelResult objects keyed by
+(round(lat,2), round(lon,2), metric, window_start). Entries expire after
+_CACHE_TTL_SECONDS (30 min). None results are never cached. All cache
+access is serialised through _cache_lock.
 """
 import logging
+import threading
+import time
 from typing import Any
 
 from engine.ensemble import compute_probability
@@ -36,6 +45,15 @@ from engine.models import ModelResult
 from market.models import Market
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# In-process result cache
+# ---------------------------------------------------------------------------
+_CACHE_TTL_SECONDS: float = 30 * 60  # 30 minutes
+
+# Maps (round(lat,2), round(lon,2), metric, window_start) -> (timestamp, ModelResult)
+_cache: dict[tuple, tuple[float, ModelResult]] = {}
+_cache_lock = threading.Lock()
 
 # Map canonical metric names (from LLM parser) → Open-Meteo API variable names
 # Open-Meteo ensemble returns per-member hourly series for these variables.
@@ -101,6 +119,21 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
     except (ValueError, TypeError):
         window_start = str(_today)
 
+    # --- Cache lookup ---
+    cache_key = (round(lat, 2), round(lon, 2), metric, window_start)
+    with _cache_lock:
+        entry = _cache.get(cache_key)
+        if entry is not None:
+            cached_at, cached_result = entry
+            if time.time() - cached_at < _CACHE_TTL_SECONDS:
+                logger.debug(
+                    "weather.compute: cache hit for (%s, %s, %s)",
+                    lat, lon, metric,
+                )
+                return cached_result
+            # Expired — remove stale entry
+            del _cache[cache_key]
+
     om_variable = _METRIC_TO_OM_VARIABLE.get(metric)
     if om_variable is None:
         logger.warning(
@@ -147,7 +180,7 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
             market.id, missing,
         )
 
-    return compute_probability(
+    result = compute_probability(
         lat=lat,
         lon=lon,
         metric=metric,
@@ -159,6 +192,13 @@ def compute(market: Market, db_path: str | None = None) -> ModelResult | None:
         ecmwf_value=ecmwf_value,
         db_path=db_path,
     )
+
+    # --- Cache successful results (never cache None) ---
+    if result is not None:
+        with _cache_lock:
+            _cache[cache_key] = (time.time(), result)
+
+    return result
 
 
 # ---------------------------------------------------------------------------

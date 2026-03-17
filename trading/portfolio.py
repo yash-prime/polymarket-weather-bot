@@ -127,12 +127,14 @@ def _compute_unrealized(
             size = float(row["size"])
             entry = float(row["entry_price"])
 
-            # P&L = size * (current_price - entry_price) for YES
-            #      size * (entry_price - current_price) for NO  (short the YES token)
+            # P&L = size * (current_price / entry - 1) for YES
+            #     = size * ((1 - current_price) / (1 - entry) - 1) for NO
             if direction == "YES":
-                pnl = size * (current_price - entry)
+                pnl = size * (current_price / entry - 1) if entry != 0 else 0.0
             else:
-                pnl = size * (entry - current_price)
+                no_entry = 1.0 - entry
+                no_current = 1.0 - current_price
+                pnl = size * (no_current / no_entry - 1) if no_entry != 0 else 0.0
 
             total_unrealized += pnl
 
@@ -199,33 +201,12 @@ def _compute_total_equity(
     db_path: str | None,
 ) -> float:
     """
-    Total equity = initial capital + realized P&L + unrealized P&L.
+    Total equity = STARTING_CAPITAL + realized P&L + unrealized P&L.
 
-    Uses the most recent snapshot as the base if available,
-    otherwise defaults to MAX_POSITION_USDC * 10.
+    Paper trading always starts at $100.
     """
-    from config import settings
-
-    try:
-        from db.init import get_connection
-
-        with get_connection(db_path) as conn:
-            row = conn.execute(
-                "SELECT total_equity FROM portfolio_snapshots "
-                "WHERE mode = ? ORDER BY snapshot_at DESC LIMIT 1",
-                (mode,),
-            ).fetchone()
-
-        if row and row["total_equity"]:
-            # Previous equity + change in unrealized
-            base = float(row["total_equity"])
-            return max(0.0, base + unrealized_pnl * 0.1)  # small increment per cycle
-
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("portfolio._compute_total_equity: snapshot read failed: %s", exc)
-
-    # First run: default starting capital ($100 paper balance)
-    return 100.0
+    STARTING_CAPITAL = 100.0
+    return STARTING_CAPITAL + realized_pnl + unrealized_pnl
 
 
 def _compute_daily_loss_pct(daily_pnl: float, total_equity: float) -> float:

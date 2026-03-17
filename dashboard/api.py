@@ -248,9 +248,13 @@ async def api_portfolio():
             row["current_price"] = yes_price
             pos_list.append(row)
 
+        deployed = sum(float(p["size"]) for p in positions if (p["size"] or 0) > 0)
+
         return {
             "snapshot": snapshot,
             "positions": pos_list,
+            "deployed": round(deployed, 2),
+            "starting_capital": 100.0,
         }
     except Exception as e:
         return {"snapshot": {}, "positions": [], "error": str(e)}
