@@ -203,6 +203,8 @@ td{padding:7px 10px;vertical-align:middle;max-width:300px}
             <tr>
               <th style="min-width:220px">Question</th>
               <th class="num">YES%</th>
+              <th class="num">NO%</th>
+              <th class="num">Open%</th>
               <th class="num">Model%</th>
               <th class="num">Edge</th>
               <th>Weather</th>
@@ -287,7 +289,7 @@ td{padding:7px 10px;vertical-align:middle;max-width:300px}
 let _halted = false;
 let _mode   = 'paper';
 let _refreshTimer = null;
-const INTERVAL = 5000; // 5s
+const INTERVAL = 60000; // 60s
 
 // ── Fetch helpers ──────────────────────────────────────────
 async function fetchJSON(url){
@@ -357,18 +359,23 @@ async function updateMarkets(){
     document.getElementById('markets-count').textContent = d.total;
     const tbody = document.getElementById('markets-tbody');
     if(!d.markets||d.markets.length===0){
-      tbody.innerHTML='<tr><td colspan="7" class="empty">No markets yet — bot is fetching…</td></tr>';
+      tbody.innerHTML='<tr><td colspan="9" class="empty">No markets yet — bot is fetching…</td></tr>';
       return;
     }
     tbody.innerHTML = d.markets.map(m=>{
-      const price = pct(m.yes_price);
+      const yesPrice  = pct(m.yes_price);
+      const noPrice   = m.no_price!=null ? pct(m.no_price) : '—';
+      const openPrice = m.start_price!=null ? pct(m.start_price) : '—';
       const model = m.model_prob!=null ? `<span class="${m.model_prob>m.yes_price?'green':'red'}">${pct(m.model_prob)}</span>` : '<span class="muted">—</span>';
       const edge  = m.edge!=null ? `<span class="${edgeColor(m.edge)}">${m.edge>=0?'+':''}${pct(m.edge)}</span>` : '<span class="muted">—</span>';
       const weather = m.weather_summary ? `<span class="blue">${esc(m.weather_summary)}</span>` : '<span class="muted">—</span>';
+      const startLabel = m.start_date ? `<small>since ${m.start_date.slice(0,10)}</small>` : '';
       const city = m.city && m.city!=='—' ? `<small>${esc(m.city)} · ${esc(m.metric||'')} ${esc(m.operator||'')} ${m.threshold!=null?m.threshold:''}</small>` : '';
       return `<tr>
-        <td class="td-q">${esc(m.question)}${city}</td>
-        <td class="num">${price}</td>
+        <td class="td-q">${esc(m.question)}${city}${startLabel}</td>
+        <td class="num">${yesPrice}</td>
+        <td class="num muted">${noPrice}</td>
+        <td class="num muted">${openPrice}</td>
         <td class="num">${model}</td>
         <td class="num">${edge}</td>
         <td>${weather}</td>
@@ -439,10 +446,13 @@ async function updatePortfolio(){
       return;
     }
     posEl.innerHTML = d.positions.map(p=>`
-      <div class="pos-row">
-        <span class="pos-dir ${(p.direction||'').toLowerCase()}">${p.direction}</span>
-        <span class="pos-q" title="${esc(p.question||p.market_id)}">${esc(p.question||p.market_id)}</span>
-        <span class="pos-size">${usd(p.size)}</span>
+      <div class="pos-row" style="flex-direction:column;align-items:flex-start;gap:3px">
+        <div style="display:flex;align-items:center;gap:8px;width:100%">
+          <span class="pos-dir ${(p.direction||'').toLowerCase()}">${p.direction}</span>
+          <span class="pos-q" title="${esc(p.question||p.market_id)}">${esc(p.question||p.market_id)}</span>
+          <span class="pos-size" style="margin-left:auto">${usd(p.size)}</span>
+        </div>
+        ${p.rationale?`<div class="trade-rationale" style="padding-left:4px">${esc(p.rationale)}</div>`:''}
       </div>`).join('');
   } catch(e){ console.warn('portfolio error',e); }
 }

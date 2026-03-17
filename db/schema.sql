@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS markets (
     parsed           TEXT,               -- JSON string (LLM-parsed structured data)
     parse_status     TEXT DEFAULT 'pending',  -- pending|success|regex_fallback|failed
     resolution_risk  TEXT,               -- LOW|MEDIUM|HIGH|NULL
+    start_date       TEXT,               -- ISO 8601 UTC — market open date from Gamma
+    start_price      REAL,               -- YES price at first observation
     last_seen        TEXT,               -- ISO 8601 UTC timestamp
     created_at       TEXT DEFAULT (datetime('now'))
 );
@@ -186,3 +188,4 @@ CREATE TABLE IF NOT EXISTS market_overrides (
 
 -- ─── Record initial schema version ───────────────────────────────────────────
 INSERT OR IGNORE INTO schema_version VALUES (1, datetime('now'));
+INSERT OR IGNORE INTO schema_version VALUES (2, datetime('now'));

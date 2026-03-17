@@ -88,7 +88,8 @@ async def api_markets():
             rows = conn.execute("""
                 SELECT
                     m.id, m.question, m.yes_price, m.volume,
-                    m.end_date, m.parse_status, m.parsed,
+                    m.end_date, m.start_date, m.start_price,
+                    m.parse_status, m.parsed,
                     lc.parsed AS llm_parsed,
                     lc.model AS llm_model
                 FROM markets m
@@ -135,6 +136,9 @@ async def api_markets():
                 "id": r["id"],
                 "question": r["question"],
                 "yes_price": r["yes_price"],
+                "no_price": (1.0 - float(r["yes_price"])) if r["yes_price"] is not None else None,
+                "start_price": r["start_price"],
+                "start_date": r["start_date"],
                 "volume": r["volume"],
                 "end_date": r["end_date"],
                 "parse_status": r["parse_status"],
@@ -205,8 +209,11 @@ async def api_portfolio():
             """).fetchone()
 
             positions = conn.execute("""
-                SELECT p.market_id, p.direction, p.size, p.avg_price,
-                       m.question, m.yes_price
+                SELECT p.market_id, p.direction, p.size, p.entry_price,
+                       m.question, m.yes_price,
+                       (SELECT rationale FROM paper_trades
+                        WHERE market_id = p.market_id
+                        ORDER BY created_at DESC LIMIT 1) AS rationale
                 FROM paper_positions p
                 LEFT JOIN markets m ON m.id = p.market_id
                 WHERE p.size > 0

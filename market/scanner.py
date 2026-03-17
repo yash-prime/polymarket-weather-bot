@@ -327,9 +327,12 @@ def _write_pending(markets: list, db_path: str | None) -> int:
         end_date_str = (
             m.get("endDate") or m.get("end_date") or m.get("endDateIso") or ""
         )
+        start_date_str = (
+            m.get("startDate") or m.get("start_date") or m.get("startDateIso") or ""
+        )
         volume = float(m.get("volume", 0) or 0)
 
-        rows.append((market_id, question, yes_price, end_date_str, volume, now_str))
+        rows.append((market_id, question, yes_price, end_date_str, start_date_str, yes_price, volume, now_str))
 
     if not rows:
         return 0
@@ -338,12 +341,12 @@ def _write_pending(markets: list, db_path: str | None) -> int:
         result = conn.executemany(
             """
             INSERT OR IGNORE INTO markets
-              (id, question, yes_price, end_date, volume, parse_status, last_seen)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+              (id, question, yes_price, end_date, start_date, start_price, volume, parse_status, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             rows,
         )
-        # Also update last_seen for existing markets (to track still-active ones)
+        # Also update last_seen and yes_price for existing markets (start_price stays fixed)
         conn.executemany(
             "UPDATE markets SET last_seen = ?, yes_price = ? WHERE id = ?",
             [(now_str, row[2], row[0]) for row in rows],
