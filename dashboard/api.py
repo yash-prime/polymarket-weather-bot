@@ -254,7 +254,7 @@ async def api_portfolio():
             "snapshot": snapshot,
             "positions": pos_list,
             "deployed": round(deployed, 2),
-            "starting_capital": 2000.0,
+            "starting_capital": 2500.0,
         }
     except Exception as e:
         return {"snapshot": {}, "positions": [], "error": str(e)}
@@ -338,7 +338,7 @@ def api_generate_report():
             f"   Ends: {p['end_date']} | Rationale: {rationale}"
         )
 
-    equity = snap["total_equity"] if snap else 2000.0
+    equity = snap["total_equity"] if snap else 2500.0
     deployed = sum(p["size"] for p in positions)
     unrealized = sum(p["unrealized_pnl"] or 0 for p in positions)
 

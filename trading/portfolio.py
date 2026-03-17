@@ -202,7 +202,7 @@ def _compute_total_equity(
 
     Paper trading always starts at $100.
     """
-    STARTING_CAPITAL = 2000.0
+    STARTING_CAPITAL = 2500.0
     return STARTING_CAPITAL + realized_pnl + unrealized_pnl
 
 

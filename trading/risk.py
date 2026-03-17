@@ -58,6 +58,16 @@ def approve(
         )
         return None
 
+    # --- 2b. Capital limit — stop trading when fully deployed ---
+    deployed = _get_deployed_capital(positions_table, db_path)
+    _CAPITAL_LIMIT = 2500.0
+    if deployed >= _CAPITAL_LIMIT:
+        logger.info(
+            "risk.approve: capital fully deployed (%.2f >= %.2f) — rejecting %s",
+            deployed, _CAPITAL_LIMIT, signal.market_id,
+        )
+        return None
+
     # --- 3. Daily loss limit ---
     daily_loss_pct = _get_daily_loss_pct(mode, db_path)
     if daily_loss_pct >= settings.DAILY_LOSS_LIMIT_PCT:
@@ -182,6 +192,21 @@ def _get_daily_loss_pct(mode: str, db_path: str | None) -> float:
         return float(row["daily_loss_pct"]) if row and row["daily_loss_pct"] is not None else 0.0
     except Exception as exc:  # noqa: BLE001
         logger.warning("risk._get_daily_loss_pct: DB read failed: %s — returning 0.0", exc)
+        return 0.0
+
+
+def _get_deployed_capital(table: str, db_path: str | None) -> float:
+    """Sum of sizes of all open positions — actual capital currently at risk."""
+    try:
+        from db.init import get_connection
+
+        with get_connection(db_path) as conn:
+            row = conn.execute(
+                f"SELECT COALESCE(SUM(size), 0) as deployed FROM {table} WHERE status = 'open'",  # noqa: S608
+            ).fetchone()
+        return float(row["deployed"]) if row else 0.0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("risk._get_deployed_capital: DB read failed: %s — assuming 0", exc)
         return 0.0
 
 

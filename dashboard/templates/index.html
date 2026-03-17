@@ -175,7 +175,6 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
   <span id="badge-mode" class="badge badge-paper">PAPER</span>
   <span id="badge-status" class="badge badge-running"><span class="dot"></span> RUNNING</span>
   <span id="scan-countdown" style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono);padding:2px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);white-space:nowrap">scan —:——</span>
-  <button id="btn-intel" onclick="generateReport()" style="font-family:var(--font-mono);font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);border:1px solid var(--purple);background:rgba(188,140,255,.1);color:var(--purple);cursor:pointer;transition:all 150ms;letter-spacing:.04em;text-transform:uppercase" title="Generate Intelligence Report">INTEL</button>
   <div class="header-spacer"></div>
   <div class="controls-bar">
     <span style="font-size:.72rem;color:var(--muted);font-family:var(--font-mono)">Edge:</span>
@@ -226,6 +225,21 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
             <tr><td colspan="7" class="empty">Loading markets…</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Intelligence Reports -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Intelligence Reports
+        <span id="intel-count" style="font-size:.72rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--purple)">0</span>
+        <button id="btn-intel" onclick="generateReport()" style="margin-left:auto;font-family:var(--font-mono);font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:var(--radius);border:1px solid var(--purple);background:rgba(188,140,255,.1);color:var(--purple);cursor:pointer;letter-spacing:.04em;text-transform:uppercase">INTEL</button>
+      </div>
+      <div class="card-body" style="padding:8px">
+        <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:8px;max-height:500px;overflow-y:auto">
+          <div style="color:var(--muted);font-size:.8rem;padding:4px">No reports yet — click INTEL to generate.</div>
+        </div>
       </div>
     </div>
 
@@ -293,18 +307,6 @@ tbody tr.has-trade:hover{filter:brightness(1.15)}
   </div>
 </div><!-- /main -->
 
-<!-- ── Intelligence Report Panel ──────────────────────────── -->
-<div id="intel-panel" style="display:none;border-top:1px solid var(--border);background:var(--bg1)">
-  <div style="max-width:1600px;margin:0 auto;padding:12px">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      Intelligence Reports
-      <span id="intel-count" style="font-size:.7rem;background:var(--bg2);padding:1px 8px;border-radius:10px;color:var(--purple)">0</span>
-      <button onclick="toggleIntel()" style="margin-left:auto;font-family:var(--font-mono);font-size:.7rem;padding:2px 8px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--muted);cursor:pointer">CLOSE ✕</button>
-    </div>
-    <div id="intel-reports-list" style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto"></div>
-  </div>
-</div>
 
 </div><!-- /layout -->
 
@@ -480,7 +482,7 @@ async function updatePortfolio(){
   try{
     const d = await fetchJSON('/api/portfolio');
     const s = d.snapshot || {};
-    const startingCapital = d.starting_capital || 2000;
+    const startingCapital = d.starting_capital || 2500;
     const pnl = s.total_equity!=null ? s.total_equity - startingCapital : (s.unrealized_pnl!=null ? s.unrealized_pnl : null);
     const pnlColor = pnl==null?'muted': pnl>=0?'green':'red';
     const available = startingCapital - (d.deployed||0);
@@ -611,13 +613,6 @@ async function refreshAll(){
 // ── Intelligence Report ─────────────────────────────────────
 let _intelCooldown = 0;
 let _intelCooldownTimer = null;
-let _intelPanelOpen = false;
-
-function toggleIntel(){
-  _intelPanelOpen = !_intelPanelOpen;
-  document.getElementById('intel-panel').style.display = _intelPanelOpen ? 'block' : 'none';
-  if(_intelPanelOpen) loadReports();
-}
 
 async function loadReports(){
   try{
@@ -645,16 +640,13 @@ async function generateReport(){
   const btn = document.getElementById('btn-intel');
   if(_intelCooldown > 0) return;
 
-  // Open panel if not open
-  if(!_intelPanelOpen){ _intelPanelOpen=true; document.getElementById('intel-panel').style.display='block'; }
-
   btn.disabled = true;
   btn.textContent = 'GENERATING…';
   btn.style.opacity = '0.6';
 
   try{
-    const d = await fetch('/api/intelligence-report', {method:'POST'});
-    if(!d.ok){ const e=await d.json(); throw new Error(e.detail||d.statusText); }
+    const r = await fetch('/api/intelligence-report', {method:'POST'});
+    if(!r.ok){ const e=await r.json(); throw new Error(e.detail||r.statusText); }
     await loadReports();
     // Start cooldown
     _intelCooldown = 60;
@@ -677,6 +669,7 @@ async function generateReport(){
 
 // ── Boot ─────────────────────────────────────────────────────
 refreshAll();
+loadReports();
 </script>
 </body>
 </html>
