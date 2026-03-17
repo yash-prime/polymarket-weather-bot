@@ -36,6 +36,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+# Install private-key redaction on all log handlers immediately after basicConfig
+from config.log_filter import install_redacting_formatter  # noqa: E402
+install_redacting_formatter()
 logger = logging.getLogger("main")
 
 # ---------------------------------------------------------------------------
